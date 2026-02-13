@@ -31,6 +31,7 @@
 #include "multi.h"
 #include "forward.h"
 #include "multi_io.h"
+#include "ipv6_pd.h"
 
 #ifdef HAVE_SYS_INOTIFY_H
 #include <sys/inotify.h>
@@ -45,6 +46,7 @@
 #define MULTI_IO_MANAGEMENT       ((void *)4)
 #define MULTI_IO_FILE_CLOSE_WRITE ((void *)5)
 #define MULTI_IO_DCO              ((void *)6)
+#define MULTI_IO_IPV6_PD          ((void *)7)
 
 struct ta_iow_flags
 {
@@ -198,6 +200,15 @@ multi_io_wait(struct multi_context *m)
 #ifdef ENABLE_ASYNC_PUSH
     /* arm inotify watcher */
     event_ctl(m->multi_io->es, m->top.c2.inotify_fd, EVENT_READ, MULTI_IO_FILE_CLOSE_WRITE);
+#endif
+
+#ifdef TARGET_LINUX
+    /* arm IPv6 Prefix Delegation monitor */
+    if (m->top.c1.ipv6_pd && ipv6_pd_get_fd(m->top.c1.ipv6_pd) >= 0)
+    {
+        event_ctl(m->multi_io->es, ipv6_pd_get_fd(m->top.c1.ipv6_pd),
+                  EVENT_READ, MULTI_IO_IPV6_PD);
+    }
 #endif
 
     status =
@@ -517,6 +528,12 @@ multi_io_process_io(struct multi_context *m)
                 else if (e->arg == MULTI_IO_FILE_CLOSE_WRITE)
                 {
                     multi_process_file_closed(m, MPP_PRE_SELECT | MPP_RECORD_TOUCH);
+                }
+#endif
+#ifdef TARGET_LINUX
+                else if (e->arg == MULTI_IO_IPV6_PD)
+                {
+                    ipv6_pd_process_event(m->top.c1.ipv6_pd);
                 }
 #endif
         }

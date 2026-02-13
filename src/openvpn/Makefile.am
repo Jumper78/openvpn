@@ -77,6 +77,7 @@ openvpn_SOURCES = \
 	lladdr.c lladdr.h \
 	init.c init.h \
 	integer.h \
+	ipv6_pd.c ipv6_pd.h \
 	interval.c interval.h \
 	list.c list.h \
 	lzo.c lzo.h \

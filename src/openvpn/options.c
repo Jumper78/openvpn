@@ -1417,6 +1417,8 @@ show_p2mp_parms(const struct options *o)
     msg(D_SHOW_PARMS, "  ifconfig_ipv6_pool_base = %s",
         print_in6_addr(o->ifconfig_ipv6_pool_base, 0, &gc));
     SHOW_INT(ifconfig_ipv6_pool_netbits);
+    SHOW_STR(ipv6_pd_iface);
+    SHOW_INT(ipv6_pd_prefix_len);
     SHOW_INT(n_bcast_buf);
     SHOW_INT(tcp_queue_limit);
     SHOW_INT(real_hash_size);
@@ -7320,6 +7322,27 @@ add_option(struct options *options, char *p[], bool is_inline, const char *file,
         options->ifconfig_ipv6_pool_defined = true;
         options->ifconfig_ipv6_pool_base = network;
         options->ifconfig_ipv6_pool_netbits = netbits;
+    }
+    else if (streq(p[0], "ipv6-pd-iface") && p[1] && !p[3])
+    {
+        VERIFY_PERMISSION(OPT_P_GENERAL);
+        options->ipv6_pd_iface = p[1];
+        if (p[2])
+        {
+            int plen = atoi(p[2]);
+            if (plen < 1 || plen > 128)
+            {
+                msg(msglevel,
+                    "--ipv6-pd-iface: prefix length must be between 1 and 128 (not %d)",
+                    plen);
+                goto err;
+            }
+            options->ipv6_pd_prefix_len = plen;
+        }
+        else
+        {
+            options->ipv6_pd_prefix_len = 0; /* accept any */
+        }
     }
     else if (streq(p[0], "hash-size") && p[1] && p[2] && !p[3])
     {

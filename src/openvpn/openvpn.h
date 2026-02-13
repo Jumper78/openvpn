@@ -46,6 +46,8 @@
 #include "manage.h"
 #include "dns.h"
 
+struct ipv6_pd_mon;
+
 /*
  * Our global key schedules, packaged thusly
  * to facilitate key persistence.
@@ -196,6 +198,10 @@ struct context_1
     /* persist --ifconfig-pool db to file */
     struct ifconfig_pool_persist *ifconfig_pool_persist;
     bool ifconfig_pool_persist_owned;
+
+    /* IPv6 Prefix Delegation monitor */
+    struct ipv6_pd_mon *ipv6_pd;
+    bool ipv6_pd_owned;
 
     /* if client mode, hash of option strings we pulled from server */
     struct sha256_digest pulled_options_digest_save;

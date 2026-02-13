@@ -53,6 +53,7 @@
 #include "mudp.h"
 #include "dco.h"
 #include "tun_afunix.h"
+#include "ipv6_pd.h"
 
 #include "memdbg.h"
 
@@ -4142,6 +4143,39 @@ do_close_ifconfig_pool_persist(struct context *c)
     }
 }
 
+static void
+do_open_ipv6_pd(struct context *c)
+{
+#ifdef TARGET_LINUX
+    if (!c->c1.ipv6_pd && c->options.ipv6_pd_iface)
+    {
+        c->c1.ipv6_pd = ipv6_pd_mon_init(c->options.ipv6_pd_iface,
+                                           c->options.ipv6_pd_prefix_len);
+        if (c->c1.ipv6_pd)
+        {
+            c->c1.ipv6_pd_owned = true;
+            ipv6_pd_query_prefix(c->c1.ipv6_pd);
+        }
+    }
+#endif
+}
+
+static void
+do_close_ipv6_pd(struct context *c)
+{
+#ifdef TARGET_LINUX
+    if (!(c->sig->signal_received == SIGUSR1))
+    {
+        if (c->c1.ipv6_pd && c->c1.ipv6_pd_owned)
+        {
+            ipv6_pd_mon_close(c->c1.ipv6_pd);
+            c->c1.ipv6_pd = NULL;
+            c->c1.ipv6_pd_owned = false;
+        }
+    }
+#endif
+}
+
 /*
  * Inherit environmental variables
  */
@@ -4526,6 +4560,12 @@ init_instance(struct context *c, const struct env_set *env, const unsigned int f
         do_open_ifconfig_pool_persist(c);
     }
 
+    /* start IPv6 Prefix Delegation monitor */
+    if (c->mode == CM_TOP)
+    {
+        do_open_ipv6_pd(c);
+    }
+
     /* reset OCC state */
     if (c->mode == CM_P2P || child)
     {
@@ -4801,6 +4841,9 @@ close_instance(struct context *c)
 
         /* close --ifconfig-pool-persist obj */
         do_close_ifconfig_pool_persist(c);
+
+        /* close IPv6 Prefix Delegation monitor */
+        do_close_ipv6_pd(c);
 
         /* free up environmental variable store */
         do_env_set_destroy(c);

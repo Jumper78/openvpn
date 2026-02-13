@@ -495,6 +495,9 @@ struct options
     struct in6_addr ifconfig_ipv6_pool_base; /* IPv6 */
     int ifconfig_ipv6_pool_netbits;          /* IPv6 */
 
+    const char *ipv6_pd_iface;              /* IPv6 PD: interface to monitor */
+    int ipv6_pd_prefix_len;                 /* IPv6 PD: expected prefix length */
+
     uint32_t real_hash_size;
     uint32_t virtual_hash_size;
     const char *client_connect_script;
