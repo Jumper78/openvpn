@@ -43,9 +43,6 @@
 #include <linux/rtnetlink.h>
 #include <arpa/inet.h>
 
-/**
- * Mask an in6_addr to the given prefix length, zeroing out the host bits.
- */
 static void
 ipv6_pd_mask_prefix(struct in6_addr *addr, int prefix_len)
 {
@@ -68,27 +65,8 @@ ipv6_pd_mask_prefix(struct in6_addr *addr, int prefix_len)
 }
 
 /**
- * Format an in6_addr as text.  Uses a static buffer — not thread-safe,
- * intended for log messages only.
- */
-static const char *
-ipv6_pd_fmt_addr(const struct in6_addr *addr)
-{
-    static char buf[INET6_ADDRSTRLEN];
-
-    return inet_ntop(AF_INET6, addr, buf, sizeof(buf));
-}
-
-/**
  * Process a single RTM_NEWADDR / RTM_DELADDR netlink message.
- *
- * If the message matches our monitored interface and carries a global-scope
- * IPv6 address whose prefix length matches the expected PD prefix, update
- * the monitor state and log the change.
- *
- * @param nlh   netlink message header
- * @param mon   the PD monitor
- * @param source  descriptive string for log messages ("query" or "event")
+ * Updates monitor state and logs prefix changes.
  */
 static void
 ipv6_pd_handle_addr_msg(const struct nlmsghdr *nlh, struct ipv6_pd_mon *mon,
@@ -97,88 +75,71 @@ ipv6_pd_handle_addr_msg(const struct nlmsghdr *nlh, struct ipv6_pd_mon *mon,
     const struct ifaddrmsg *ifa = NLMSG_DATA(nlh);
     const struct rtattr *rta;
     int len;
+    char buf[INET6_ADDRSTRLEN];
     struct in6_addr addr;
-    bool have_addr = false;
 
-    /* only interested in IPv6 */
-    if (ifa->ifa_family != AF_INET6)
+    if (ifa->ifa_family != AF_INET6
+        || (int)ifa->ifa_index != mon->ifindex
+        || ifa->ifa_scope != RT_SCOPE_UNIVERSE)
     {
         return;
     }
 
-    /* only interested in our interface */
-    if ((int)ifa->ifa_index != mon->ifindex)
+    if (mon->expected_prefix_len > 0
+        && (int)ifa->ifa_prefixlen != mon->expected_prefix_len)
     {
         return;
     }
 
-    /* only interested in global (universe) scope addresses */
-    if (ifa->ifa_scope != RT_SCOPE_UNIVERSE)
-    {
-        return;
-    }
-
-    /* only interested in addresses that match the expected PD prefix length */
-    if (mon->expected_prefix_len > 0 && (int)ifa->ifa_prefixlen != mon->expected_prefix_len)
-    {
-        return;
-    }
-
-    /* parse attributes to find IFA_ADDRESS */
     rta = (const struct rtattr *)((const char *)ifa + NLMSG_ALIGN(sizeof(*ifa)));
     len = (int)(nlh->nlmsg_len - NLMSG_LENGTH(sizeof(*ifa)));
 
     while (RTA_OK(rta, len))
     {
-        if (rta->rta_type == IFA_ADDRESS && RTA_PAYLOAD(rta) == sizeof(struct in6_addr))
+        if (rta->rta_type == IFA_ADDRESS
+            && RTA_PAYLOAD(rta) == sizeof(struct in6_addr))
         {
             memcpy(&addr, RTA_DATA(rta), sizeof(addr));
-            have_addr = true;
-            break;
+            goto found;
         }
         rta = RTA_NEXT(rta, len);
     }
+    return;
 
-    if (!have_addr)
-    {
-        return;
-    }
-
-    /* extract the network prefix by masking host bits */
+found:;
     struct in6_addr new_prefix = addr;
-    int new_prefix_len = (int)ifa->ifa_prefixlen;
-    ipv6_pd_mask_prefix(&new_prefix, new_prefix_len);
+    int plen = (int)ifa->ifa_prefixlen;
+    ipv6_pd_mask_prefix(&new_prefix, plen);
 
     if (nlh->nlmsg_type == RTM_NEWADDR)
     {
         if (mon->prefix_valid
-            && memcmp(&mon->prefix, &new_prefix, sizeof(new_prefix)) == 0
-            && mon->prefix_len == new_prefix_len)
+            && mon->prefix_len == plen
+            && memcmp(&mon->prefix, &new_prefix, sizeof(new_prefix)) == 0)
         {
-            /* prefix unchanged, nothing to do */
             msg(D_IFCONFIG_POOL, "IPv6-PD %s: prefix unchanged %s/%d on %s",
-                source, ipv6_pd_fmt_addr(&new_prefix), new_prefix_len,
-                mon->iface);
+                source, inet_ntop(AF_INET6, &new_prefix, buf, sizeof(buf)),
+                plen, mon->iface);
             return;
         }
 
         if (mon->prefix_valid)
         {
-            msg(M_INFO, "IPv6-PD %s: prefix changed on %s: "
-                "%s/%d -> %s/%d",
-                source, mon->iface,
-                ipv6_pd_fmt_addr(&mon->prefix), mon->prefix_len,
-                ipv6_pd_fmt_addr(&new_prefix), new_prefix_len);
+            char old[INET6_ADDRSTRLEN];
+            inet_ntop(AF_INET6, &mon->prefix, old, sizeof(old));
+            msg(M_INFO, "IPv6-PD %s: prefix changed on %s: %s/%d -> %s/%d",
+                source, mon->iface, old, mon->prefix_len,
+                inet_ntop(AF_INET6, &new_prefix, buf, sizeof(buf)), plen);
         }
         else
         {
             msg(M_INFO, "IPv6-PD %s: acquired prefix %s/%d on %s",
-                source, ipv6_pd_fmt_addr(&new_prefix), new_prefix_len,
-                mon->iface);
+                source, inet_ntop(AF_INET6, &new_prefix, buf, sizeof(buf)),
+                plen, mon->iface);
         }
 
         mon->prefix = new_prefix;
-        mon->prefix_len = new_prefix_len;
+        mon->prefix_len = plen;
         mon->prefix_valid = true;
     }
     else if (nlh->nlmsg_type == RTM_DELADDR)
@@ -186,12 +147,78 @@ ipv6_pd_handle_addr_msg(const struct nlmsghdr *nlh, struct ipv6_pd_mon *mon,
         if (mon->prefix_valid
             && memcmp(&mon->prefix, &new_prefix, sizeof(new_prefix)) == 0)
         {
-            msg(M_INFO, "IPv6-PD %s: prefix %s/%d lost on %s (address removed)",
-                source, ipv6_pd_fmt_addr(&mon->prefix), mon->prefix_len,
-                mon->iface);
+            msg(M_INFO, "IPv6-PD %s: prefix %s/%d lost on %s",
+                source, inet_ntop(AF_INET6, &mon->prefix, buf, sizeof(buf)),
+                mon->prefix_len, mon->iface);
             mon->prefix_valid = false;
-            memset(&mon->prefix, 0, sizeof(mon->prefix));
+            CLEAR(mon->prefix);
             mon->prefix_len = 0;
+        }
+    }
+}
+
+/**
+ * Read and process all pending netlink messages from a socket.
+ * Works for both the initial dump (blocking) and async events (non-blocking).
+ */
+static int
+ipv6_pd_recv_messages(int fd, struct ipv6_pd_mon *mon, const char *source,
+                       int flags)
+{
+    char buf[4096];
+    struct iovec iov = { .iov_base = buf, .iov_len = sizeof(buf) };
+    struct sockaddr_nl nladdr;
+    struct msghdr nlmsg = {
+        .msg_name = &nladdr,
+        .msg_namelen = sizeof(nladdr),
+        .msg_iov = &iov,
+        .msg_iovlen = 1,
+    };
+
+    while (1)
+    {
+        iov.iov_len = sizeof(buf);
+        ssize_t rcv_len = recvmsg(fd, &nlmsg, flags);
+        if (rcv_len < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            if (errno == EAGAIN)
+            {
+                return 0;
+            }
+            msg(M_WARN | M_ERRNO, "IPv6-PD %s: recvmsg failed", source);
+            return -errno;
+        }
+        if (rcv_len == 0)
+        {
+            return 0;
+        }
+
+        struct nlmsghdr *h = (struct nlmsghdr *)buf;
+        while (NLMSG_OK(h, (size_t)rcv_len))
+        {
+            if (h->nlmsg_type == NLMSG_DONE)
+            {
+                return 0;
+            }
+            if (h->nlmsg_type == NLMSG_ERROR)
+            {
+                struct nlmsgerr *err = NLMSG_DATA(h);
+                if (err->error)
+                {
+                    msg(M_WARN, "IPv6-PD %s: netlink error: %s",
+                        source, strerror(-err->error));
+                }
+                return err->error;
+            }
+            if (h->nlmsg_type == RTM_NEWADDR || h->nlmsg_type == RTM_DELADDR)
+            {
+                ipv6_pd_handle_addr_msg(h, mon, source);
+            }
+            h = NLMSG_NEXT(h, rcv_len);
         }
     }
 }
@@ -200,15 +227,13 @@ struct ipv6_pd_mon *
 ipv6_pd_mon_init(const char *iface, int expected_prefix_len)
 {
     struct ipv6_pd_mon *mon;
-    struct sockaddr_nl local;
-    int fd;
-    int ifindex;
-    int sndbuf = 2048;
-    int rcvbuf = 4096;
+    struct sockaddr_nl local = { .nl_family = AF_NETLINK,
+                                 .nl_groups = RTMGRP_IPV6_IFADDR };
+    int fd, ifindex;
 
     if (!iface || !iface[0])
     {
-        msg(M_WARN, "IPv6-PD: no interface specified for prefix monitoring");
+        msg(M_WARN, "IPv6-PD: no interface specified");
         return NULL;
     }
 
@@ -225,15 +250,8 @@ ipv6_pd_mon_init(const char *iface, int expected_prefix_len)
         msg(M_WARN | M_ERRNO, "IPv6-PD: cannot open netlink socket");
         return NULL;
     }
-
-    setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
-    setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
     set_cloexec(fd);
     set_nonblock(fd);
-
-    memset(&local, 0, sizeof(local));
-    local.nl_family = AF_NETLINK;
-    local.nl_groups = RTMGRP_IPV6_IFADDR;
 
     if (bind(fd, (struct sockaddr *)&local, sizeof(local)) < 0)
     {
@@ -245,14 +263,11 @@ ipv6_pd_mon_init(const char *iface, int expected_prefix_len)
     ALLOC_OBJ_CLEAR(mon, struct ipv6_pd_mon);
     mon->nl_fd = fd;
     strncpy(mon->iface, iface, IFNAMSIZ - 1);
-    mon->iface[IFNAMSIZ - 1] = '\0';
     mon->ifindex = ifindex;
     mon->expected_prefix_len = expected_prefix_len;
-    mon->prefix_valid = false;
 
-    msg(M_INFO, "IPv6-PD: monitoring interface %s (ifindex %d) for "
-        "prefix changes (expected /%d)",
-        mon->iface, mon->ifindex, mon->expected_prefix_len);
+    msg(M_INFO, "IPv6-PD: monitoring %s for prefix changes (expected /%d)",
+        mon->iface, mon->expected_prefix_len);
 
     return mon;
 }
@@ -260,38 +275,33 @@ ipv6_pd_mon_init(const char *iface, int expected_prefix_len)
 int
 ipv6_pd_query_prefix(struct ipv6_pd_mon *mon)
 {
-    int fd;
-    struct sockaddr_nl nladdr;
     struct
     {
         struct nlmsghdr n;
         struct ifaddrmsg i;
     } req;
-    char buf[8192];
-    struct iovec iov;
-    struct msghdr nlmsg;
-    bool found = false;
+    struct sockaddr_nl nladdr = { .nl_family = AF_NETLINK };
+    struct iovec iov = { .iov_base = &req, .iov_len = 0 };
+    struct msghdr nlmsg = {
+        .msg_name = &nladdr,
+        .msg_namelen = sizeof(nladdr),
+        .msg_iov = &iov,
+        .msg_iovlen = 1,
+    };
+    int fd, ret;
 
     if (!mon)
     {
         return -EINVAL;
     }
 
-    msg(D_IFCONFIG_POOL, "IPv6-PD query: requesting IPv6 addresses on %s",
-        mon->iface);
-
-    /* open a separate socket for the dump request so we don't mix
-     * dump replies with asynchronous events on the monitor socket */
+    /* Use a separate socket so dump replies don't mix with async events */
     fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
     if (fd < 0)
     {
         msg(M_WARN | M_ERRNO, "IPv6-PD query: cannot open netlink socket");
         return -errno;
     }
-
-    memset(&nladdr, 0, sizeof(nladdr));
-    nladdr.nl_family = AF_NETLINK;
-
     if (bind(fd, (struct sockaddr *)&nladdr, sizeof(nladdr)) < 0)
     {
         msg(M_WARN | M_ERRNO, "IPv6-PD query: cannot bind netlink socket");
@@ -299,25 +309,13 @@ ipv6_pd_query_prefix(struct ipv6_pd_mon *mon)
         return -errno;
     }
 
-    /* build RTM_GETADDR dump request for AF_INET6 */
-    memset(&req, 0, sizeof(req));
+    CLEAR(req);
     req.n.nlmsg_len = NLMSG_LENGTH(sizeof(req.i));
     req.n.nlmsg_type = RTM_GETADDR;
     req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
     req.n.nlmsg_seq = (uint32_t)time(NULL);
     req.i.ifa_family = AF_INET6;
-
-    memset(&nladdr, 0, sizeof(nladdr));
-    nladdr.nl_family = AF_NETLINK;
-
-    iov.iov_base = &req;
     iov.iov_len = req.n.nlmsg_len;
-
-    memset(&nlmsg, 0, sizeof(nlmsg));
-    nlmsg.msg_name = &nladdr;
-    nlmsg.msg_namelen = sizeof(nladdr);
-    nlmsg.msg_iov = &iov;
-    nlmsg.msg_iovlen = 1;
 
     if (sendmsg(fd, &nlmsg, 0) < 0)
     {
@@ -326,128 +324,26 @@ ipv6_pd_query_prefix(struct ipv6_pd_mon *mon)
         return -errno;
     }
 
-    /* receive and process dump replies */
-    while (1)
-    {
-        iov.iov_base = buf;
-        iov.iov_len = sizeof(buf);
-
-        ssize_t rcv_len = recvmsg(fd, &nlmsg, 0);
-        if (rcv_len < 0)
-        {
-            if (errno == EINTR || errno == EAGAIN)
-            {
-                continue;
-            }
-            msg(M_WARN | M_ERRNO, "IPv6-PD query: recvmsg failed");
-            close(fd);
-            return -errno;
-        }
-        if (rcv_len == 0)
-        {
-            break;
-        }
-
-        struct nlmsghdr *h = (struct nlmsghdr *)buf;
-
-        while (NLMSG_OK(h, (size_t)rcv_len))
-        {
-            if (h->nlmsg_type == NLMSG_DONE)
-            {
-                goto done;
-            }
-
-            if (h->nlmsg_type == NLMSG_ERROR)
-            {
-                struct nlmsgerr *err = NLMSG_DATA(h);
-                if (err->error)
-                {
-                    msg(M_WARN, "IPv6-PD query: netlink error: %s",
-                        strerror(-err->error));
-                }
-                goto done;
-            }
-
-            if (h->nlmsg_type == RTM_NEWADDR)
-            {
-                ipv6_pd_handle_addr_msg(h, mon, "query");
-                if (mon->prefix_valid)
-                {
-                    found = true;
-                }
-            }
-
-            h = NLMSG_NEXT(h, rcv_len);
-        }
-    }
-
-done:
+    ret = ipv6_pd_recv_messages(fd, mon, "query", 0);
     close(fd);
 
-    if (!found && !mon->prefix_valid)
+    if (!mon->prefix_valid)
     {
-        msg(M_INFO, "IPv6-PD query: no matching prefix found on %s "
-            "(expected /%d, global scope)",
+        msg(M_INFO, "IPv6-PD query: no matching prefix on %s (expected /%d)",
             mon->iface, mon->expected_prefix_len);
     }
 
-    return 0;
+    return ret;
 }
 
 int
 ipv6_pd_process_event(struct ipv6_pd_mon *mon)
 {
-    char buf[4096];
-    struct iovec iov = {
-        .iov_base = buf,
-        .iov_len = sizeof(buf),
-    };
-    struct sockaddr_nl nladdr;
-    struct msghdr nlmsg = {
-        .msg_name = &nladdr,
-        .msg_namelen = sizeof(nladdr),
-        .msg_iov = &iov,
-        .msg_iovlen = 1,
-    };
-
     if (!mon || mon->nl_fd < 0)
     {
         return -EINVAL;
     }
-
-    ssize_t rcv_len = recvmsg(mon->nl_fd, &nlmsg, MSG_DONTWAIT);
-    if (rcv_len < 0)
-    {
-        if (errno == EINTR || errno == EAGAIN)
-        {
-            return 0;
-        }
-        msg(M_WARN | M_ERRNO, "IPv6-PD event: recvmsg failed");
-        return -errno;
-    }
-    if (rcv_len == 0)
-    {
-        return 0;
-    }
-
-    msg(D_IFCONFIG_POOL, "IPv6-PD event: received %zd bytes from netlink",
-        rcv_len);
-
-    struct nlmsghdr *h = (struct nlmsghdr *)buf;
-
-    while (NLMSG_OK(h, (size_t)rcv_len))
-    {
-        if (h->nlmsg_type == RTM_NEWADDR || h->nlmsg_type == RTM_DELADDR)
-        {
-            msg(D_IFCONFIG_POOL, "IPv6-PD event: received %s",
-                h->nlmsg_type == RTM_NEWADDR ? "RTM_NEWADDR" : "RTM_DELADDR");
-            ipv6_pd_handle_addr_msg(h, mon, "event");
-        }
-
-        h = NLMSG_NEXT(h, rcv_len);
-    }
-
-    return 0;
+    return ipv6_pd_recv_messages(mon->nl_fd, mon, "event", MSG_DONTWAIT);
 }
 
 void
@@ -457,15 +353,11 @@ ipv6_pd_mon_close(struct ipv6_pd_mon *mon)
     {
         return;
     }
-
     if (mon->nl_fd >= 0)
     {
         close(mon->nl_fd);
-        mon->nl_fd = -1;
     }
-
     msg(D_IFCONFIG_POOL, "IPv6-PD: monitor closed for %s", mon->iface);
-
     free(mon);
 }
 

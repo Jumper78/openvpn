@@ -29,70 +29,30 @@
 #include <net/if.h>
 #include <stdbool.h>
 
-/**
- * IPv6 Prefix Delegation monitor.
- *
- * Monitors a network interface for IPv6 global-scope addresses via netlink
- * and extracts the delegated prefix.  The netlink socket receives
- * asynchronous RTM_NEWADDR / RTM_DELADDR events so that prefix changes
- * (e.g. from DHCPv6-PD lease renewals) are detected immediately.
- */
 struct ipv6_pd_mon
 {
-    int              nl_fd;               /**< Netlink socket fd for monitoring */
-    char             iface[IFNAMSIZ];     /**< Interface to watch */
-    int              ifindex;             /**< Cached interface index */
-    int              expected_prefix_len; /**< Expected prefix length (e.g. 48, 56) */
-    bool             prefix_valid;        /**< Do we have a valid prefix? */
-    struct in6_addr  prefix;              /**< Current delegated prefix (network part) */
-    int              prefix_len;          /**< Actual prefix length of current prefix */
+    int              nl_fd;
+    char             iface[IFNAMSIZ];
+    int              ifindex;
+    int              expected_prefix_len;
+    bool             prefix_valid;
+    struct in6_addr  prefix;
+    int              prefix_len;
 };
 
-/**
- * Initialise the IPv6 PD monitor.
- *
- * Opens a NETLINK_ROUTE socket subscribed to RTMGRP_IPV6_IFADDR and
- * resolves the interface index.
- *
- * @param iface              Interface name to monitor (e.g. "eth0")
- * @param expected_prefix_len  Expected delegated prefix length (e.g. 56)
- * @return allocated monitor, or NULL on error
- */
 struct ipv6_pd_mon *ipv6_pd_mon_init(const char *iface, int expected_prefix_len);
 
-/**
- * Perform a one-shot query of all current IPv6 addresses on the monitored
- * interface and extract the delegated prefix.
- *
- * @param mon  the PD monitor
- * @return 0 on success, negative on error
- */
 int ipv6_pd_query_prefix(struct ipv6_pd_mon *mon);
 
-/**
- * Process pending netlink events on the monitor socket.
- *
- * Call this when the netlink fd becomes readable.  Parses
- * RTM_NEWADDR / RTM_DELADDR messages and updates the stored prefix.
- *
- * @param mon  the PD monitor
- * @return 0 on success, negative on error
- */
 int ipv6_pd_process_event(struct ipv6_pd_mon *mon);
 
-/**
- * Return the netlink fd for integration into an event loop.
- */
+void ipv6_pd_mon_close(struct ipv6_pd_mon *mon);
+
 static inline int
 ipv6_pd_get_fd(const struct ipv6_pd_mon *mon)
 {
     return mon ? mon->nl_fd : -1;
 }
-
-/**
- * Close the monitor and free all resources.
- */
-void ipv6_pd_mon_close(struct ipv6_pd_mon *mon);
 
 #endif /* TARGET_LINUX */
 #endif /* IPV6_PD_H */
