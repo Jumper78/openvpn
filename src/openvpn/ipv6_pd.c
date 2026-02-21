@@ -33,6 +33,7 @@
 #include "errlevel.h"
 #include "error.h"
 #include "fdmisc.h"
+#include "socket_util.h"
 
 #include <errno.h>
 #include <string.h>
@@ -41,7 +42,6 @@
 #include <sys/socket.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
-#include <arpa/inet.h>
 
 static void
 ipv6_pd_mask_prefix(struct in6_addr *addr, int prefix_len)
@@ -75,20 +75,20 @@ ipv6_pd_handle_addr_msg(const struct nlmsghdr *nlh, struct ipv6_pd_mon *mon,
     const struct ifaddrmsg *ifa = NLMSG_DATA(nlh);
     const struct rtattr *rta;
     int len;
-    char buf[INET6_ADDRSTRLEN];
+    struct gc_arena gc = gc_new();
     struct in6_addr addr;
 
     if (ifa->ifa_family != AF_INET6
         || (int)ifa->ifa_index != mon->ifindex
         || ifa->ifa_scope != RT_SCOPE_UNIVERSE)
     {
-        return;
+        goto out;
     }
 
     if (mon->expected_prefix_len > 0
         && (int)ifa->ifa_prefixlen != mon->expected_prefix_len)
     {
-        return;
+        goto out;
     }
 
     rta = (const struct rtattr *)((const char *)ifa + NLMSG_ALIGN(sizeof(*ifa)));
@@ -104,7 +104,7 @@ ipv6_pd_handle_addr_msg(const struct nlmsghdr *nlh, struct ipv6_pd_mon *mon,
         }
         rta = RTA_NEXT(rta, len);
     }
-    return;
+    goto out;
 
 found:;
     struct in6_addr new_prefix = addr;
@@ -118,23 +118,22 @@ found:;
             && memcmp(&mon->prefix, &new_prefix, sizeof(new_prefix)) == 0)
         {
             msg(D_IFCONFIG_POOL, "IPv6-PD %s: prefix unchanged %s/%d on %s",
-                source, inet_ntop(AF_INET6, &new_prefix, buf, sizeof(buf)),
+                source, print_in6_addr(new_prefix, 0, &gc),
                 plen, mon->iface);
-            return;
+            goto out;
         }
 
         if (mon->prefix_valid)
         {
-            char old[INET6_ADDRSTRLEN];
-            inet_ntop(AF_INET6, &mon->prefix, old, sizeof(old));
             msg(M_INFO, "IPv6-PD %s: prefix changed on %s: %s/%d -> %s/%d",
-                source, mon->iface, old, mon->prefix_len,
-                inet_ntop(AF_INET6, &new_prefix, buf, sizeof(buf)), plen);
+                source, mon->iface,
+                print_in6_addr(mon->prefix, 0, &gc), mon->prefix_len,
+                print_in6_addr(new_prefix, 0, &gc), plen);
         }
         else
         {
             msg(M_INFO, "IPv6-PD %s: acquired prefix %s/%d on %s",
-                source, inet_ntop(AF_INET6, &new_prefix, buf, sizeof(buf)),
+                source, print_in6_addr(new_prefix, 0, &gc),
                 plen, mon->iface);
         }
 
@@ -148,13 +147,16 @@ found:;
             && memcmp(&mon->prefix, &new_prefix, sizeof(new_prefix)) == 0)
         {
             msg(M_INFO, "IPv6-PD %s: prefix %s/%d lost on %s",
-                source, inet_ntop(AF_INET6, &mon->prefix, buf, sizeof(buf)),
+                source, print_in6_addr(mon->prefix, 0, &gc),
                 mon->prefix_len, mon->iface);
             mon->prefix_valid = false;
             CLEAR(mon->prefix);
             mon->prefix_len = 0;
         }
     }
+
+out:
+    gc_free(&gc);
 }
 
 /**
