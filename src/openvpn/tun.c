@@ -103,7 +103,7 @@ static void netsh_ifconfig(const struct tuntap_options *to, DWORD adapter_index,
 
 static void windows_set_mtu(const int iface_index, const short family, const int mtu);
 
-static void netsh_set_dns6_servers(const struct in6_addr *addr_list, const int addr_len,
+static void netsh_set_dns6_servers(const struct in6_addr *addr_list, const unsigned int addr_len,
                                    DWORD adapter_index);
 
 static void netsh_command(const struct argv *a, int n, msglvl_t msglevel);
@@ -153,7 +153,7 @@ do_address_service(const bool add, const short family, const struct tuntap *tt)
 
     if (ack.error_number != NO_ERROR)
     {
-        msg(M_WARN, "TUN: %s address failed using service: %s [status=%u if_index=%d]",
+        msg(M_WARN, "TUN: %s address failed using service: %s [status=%u if_index=%lu]",
             (add ? "adding" : "deleting"), strerror_win32(ack.error_number, &gc), ack.error_number,
             addr.iface.index);
         goto out;
@@ -215,7 +215,7 @@ do_dns_domain_service(bool add, const struct tuntap *tt)
         strncpy(dns.domains + dstlen, o->domain_search_list[i], srclen + 1);
     }
 
-    msg(D_LOW, "%s DNS domains on '%s' (if_index = %d) using service",
+    msg(D_LOW, "%s DNS domains on '%s' (if_index = %lu) using service",
         (add ? "Setting" : "Deleting"), dns.iface.name, dns.iface.index);
     if (!send_msg_iservice(o->msg_channel, &dns, sizeof(dns), &ack, "TUN"))
     {
@@ -242,8 +242,8 @@ do_dns_service(bool add, const short family, const struct tuntap *tt)
     ack_message_t ack;
     struct gc_arena gc = gc_new();
     HANDLE pipe = tt->options.msg_channel;
-    int len = family == AF_INET6 ? tt->options.dns6_len : tt->options.dns_len;
-    int addr_len = add ? len : 0;
+    unsigned int len = family == AF_INET6 ? tt->options.dns6_len : tt->options.dns_len;
+    unsigned int addr_len = add ? len : 0;
     const char *ip_proto_name = family == AF_INET6 ? "IPv6" : "IPv4";
 
     if (len == 0)
@@ -268,11 +268,11 @@ do_dns_service(bool add, const short family, const struct tuntap *tt)
     {
         addr_len = _countof(dns.addr);
         dns.addr_len = addr_len;
-        msg(M_WARN, "Number of %s DNS addresses sent to service truncated to %d", ip_proto_name,
-            addr_len);
+        msg(M_WARN, "Number of %s DNS addresses sent to service truncated to %u",
+            ip_proto_name, addr_len);
     }
 
-    for (int i = 0; i < addr_len; ++i)
+    for (unsigned int i = 0; i < addr_len; ++i)
     {
         if (family == AF_INET6)
         {
@@ -284,7 +284,7 @@ do_dns_service(bool add, const short family, const struct tuntap *tt)
         }
     }
 
-    msg(D_LOW, "%s %s dns servers on '%s' (if_index = %d) using service",
+    msg(D_LOW, "%s %s dns servers on '%s' (if_index = %lu) using service",
         (add ? "Setting" : "Deleting"), ip_proto_name, dns.iface.name, dns.iface.index);
 
     if (!send_msg_iservice(pipe, &dns, sizeof(dns), &ack, "TUN"))
@@ -312,7 +312,7 @@ do_wins_service(bool add, const struct tuntap *tt)
     ack_message_t ack;
     struct gc_arena gc = gc_new();
     HANDLE pipe = tt->options.msg_channel;
-    int addr_len = add ? tt->options.wins_len : 0;
+    unsigned int addr_len = add ? tt->options.wins_len : 0;
 
     if (tt->options.wins_len == 0)
     {
@@ -333,15 +333,15 @@ do_wins_service(bool add, const struct tuntap *tt)
     {
         addr_len = _countof(wins.addr);
         wins.addr_len = addr_len;
-        msg(M_WARN, "Number of WINS addresses sent to service truncated to %d", addr_len);
+        msg(M_WARN, "Number of WINS addresses sent to service truncated to %u", addr_len);
     }
 
-    for (int i = 0; i < addr_len; ++i)
+    for (unsigned int i = 0; i < addr_len; ++i)
     {
         wins.addr[i].ipv4.s_addr = htonl(tt->options.wins[i]);
     }
 
-    msg(D_LOW, "%s WINS servers on '%s' (if_index = %d) using service",
+    msg(D_LOW, "%s WINS servers on '%s' (if_index = %lu) using service",
         (add ? "Setting" : "Deleting"), wins.iface.name, wins.iface.index);
 
     if (!send_msg_iservice(pipe, &wins, sizeof(wins), &ack, "TUN"))
@@ -352,8 +352,8 @@ do_wins_service(bool add, const struct tuntap *tt)
     if (ack.error_number != NO_ERROR)
     {
         msg(M_WARN, "TUN: %s WINS failed using service: %s [status=%u if_name=%s]",
-            (add ? "adding" : "deleting"), strerror_win32(ack.error_number, &gc), ack.error_number,
-            wins.iface.name);
+            (add ? "adding" : "deleting"), strerror_win32(ack.error_number, &gc),
+            ack.error_number, wins.iface.name);
         goto out;
     }
 
@@ -389,13 +389,13 @@ do_set_mtu_service(const struct tuntap *tt, const short family, const int mtu)
 
     if (ack.error_number != NO_ERROR)
     {
-        msg(M_NONFATAL, "TUN: setting %s mtu using service failed: %s [status=%u if_index=%d]",
+        msg(M_NONFATAL, "TUN: setting %s mtu using service failed: %s [status=%u if_index=%lu]",
             family_name, strerror_win32(ack.error_number, &gc), ack.error_number,
             mtu_msg.iface.index);
     }
     else
     {
-        msg(M_INFO, "%s MTU set to %d on interface %d using service", family_name, mtu,
+        msg(M_INFO, "%s MTU set to %d on interface %lu using service", family_name, mtu,
             mtu_msg.iface.index);
         ret = true;
     }
@@ -1706,6 +1706,11 @@ clear_tuntap(struct tuntap *tuntap)
 #include <netinet/ip.h>
 #include <sys/uio.h>
 
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-compare"
+#endif
+
 static inline ssize_t
 header_modify_read_write_return(ssize_t len)
 {
@@ -1718,6 +1723,10 @@ header_modify_read_write_return(ssize_t len)
         return len;
     }
 }
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 static ssize_t
 write_tun_header(struct tuntap *tt, uint8_t *buf, int len)
@@ -1980,13 +1989,13 @@ open_tun(const char *dev, const char *dev_type, const char *dev_node, struct tun
 
     /* Prefer IPv6 DNS servers,
      * Android will use the DNS server in the order we specify*/
-    for (int i = 0; i < tt->options.dns6_len; i++)
+    for (unsigned int i = 0; i < tt->options.dns6_len; i++)
     {
         management_android_control(management, "DNS6SERVER",
                                    print_in6_addr(tt->options.dns6[i], 0, &gc));
     }
 
-    for (int i = 0; i < tt->options.dns_len; i++)
+    for (unsigned int i = 0; i < tt->options.dns_len; i++)
     {
         management_android_control(management, "DNSSERVER",
                                    print_in_addr_t(tt->options.dns[i], 0, &gc));
@@ -3011,7 +3020,7 @@ open_darwin_utun(const char *dev, const char *dev_type, const char *dev_node, st
     /* Retrieve the assigned interface name. */
     if (getsockopt(fd, SYSPROTO_CONTROL, UTUN_OPT_IFNAME, utunname, &utunname_len))
     {
-        msg(M_ERR | M_ERRNO, "Error retrieving utun interface name");
+        msg(M_ERR, "Error retrieving utun interface name");
     }
 
     tt->actual_name = string_alloc(utunname, NULL);
@@ -3260,14 +3269,13 @@ tun_read_queue(struct tuntap *tt, int maxsize)
 {
     if (tt->reads.iostate == IOSTATE_INITIAL)
     {
-        DWORD len;
         BOOL status;
         int err;
 
         /* reset buf to its initial state */
         tt->reads.buf = tt->reads.buf_init;
 
-        len = maxsize ? maxsize : BLEN(&tt->reads.buf);
+        int len = maxsize ? maxsize : BLEN(&tt->reads.buf);
         ASSERT(len <= BLEN(&tt->reads.buf));
 
         /* the overlapped read will signal this event on I/O completion */
@@ -3284,8 +3292,8 @@ tun_read_queue(struct tuntap *tt, int maxsize)
             tt->reads.iostate = IOSTATE_IMMEDIATE_RETURN;
             tt->reads.status = 0;
 
-            dmsg(D_WIN32_IO, "WIN32 I/O: TAP Read immediate return [%d,%d]", (int)len,
-                 (int)tt->reads.size);
+            dmsg(D_WIN32_IO, "WIN32 I/O: TAP Read immediate return [%d,%lu]", len,
+                 tt->reads.size);
         }
         else
         {
@@ -3294,7 +3302,7 @@ tun_read_queue(struct tuntap *tt, int maxsize)
             {
                 tt->reads.iostate = IOSTATE_QUEUED;
                 tt->reads.status = err;
-                dmsg(D_WIN32_IO, "WIN32 I/O: TAP Read queued [%d]", (int)len);
+                dmsg(D_WIN32_IO, "WIN32 I/O: TAP Read queued [%d]", len);
             }
             else /* error occurred */
             {
@@ -3302,7 +3310,7 @@ tun_read_queue(struct tuntap *tt, int maxsize)
                 ASSERT(SetEvent(tt->reads.overlapped.hEvent));
                 tt->reads.iostate = IOSTATE_IMMEDIATE_RETURN;
                 tt->reads.status = err;
-                dmsg(D_WIN32_IO, "WIN32 I/O: TAP Read error [%d] : %s", (int)len,
+                dmsg(D_WIN32_IO, "WIN32 I/O: TAP Read error [%d] : %s", len,
                      strerror_win32(status, &gc));
                 gc_free(&gc);
             }
@@ -3339,8 +3347,8 @@ tun_write_queue(struct tuntap *tt, struct buffer *buf)
 
             tt->writes.status = 0;
 
-            dmsg(D_WIN32_IO, "WIN32 I/O: TAP Write immediate return [%d,%d]", BLEN(&tt->writes.buf),
-                 (int)tt->writes.size);
+            dmsg(D_WIN32_IO, "WIN32 I/O: TAP Write immediate return [%d,%lu]", BLEN(&tt->writes.buf),
+                 tt->writes.size);
         }
         else
         {
@@ -3405,7 +3413,7 @@ get_device_instance_id_interface(struct gc_arena *gc)
     if (dev_info_set == INVALID_HANDLE_VALUE)
     {
         err = GetLastError();
-        msg(M_FATAL, "Error [%u] opening device information set key: %s", (unsigned int)err,
+        msg(M_FATAL, "Error [%lu] opening device information set key: %s", err,
             strerror_win32(err, gc));
     }
 
@@ -3558,9 +3566,7 @@ get_tap_reg(struct gc_arena *gc)
             msg(M_FATAL, "Error enumerating registry subkeys of key: %s", ADAPTER_KEY);
         }
 
-        int ret = snprintf(unit_string, sizeof(unit_string), "%s\\%s", ADAPTER_KEY, enum_name);
-
-        if (ret < 0 || ret >= sizeof(unit_string))
+        if (!checked_snprintf(unit_string, sizeof(unit_string), "%s\\%s", ADAPTER_KEY, enum_name))
         {
             msg(M_WARN, "Error constructing unit string for %s", enum_name);
             continue;
@@ -3673,10 +3679,9 @@ get_panel_reg(struct gc_arena *gc)
             msg(M_FATAL, "Error enumerating registry subkeys of key: %s", NETWORK_CONNECTIONS_KEY);
         }
 
-        int ret = snprintf(connection_string, sizeof(connection_string), "%s\\%s\\Connection",
-                           NETWORK_CONNECTIONS_KEY, enum_name);
-
-        if (ret < 0 || ret >= sizeof(connection_string))
+        if (!checked_snprintf(connection_string, sizeof(connection_string),
+                              "%s\\%s\\Connection",
+                              NETWORK_CONNECTIONS_KEY, enum_name))
         {
             msg(M_WARN, "Error constructing connection string for %s", enum_name);
             continue;
@@ -4091,7 +4096,7 @@ get_adapter_info_list(struct gc_arena *gc)
 
     if ((status = GetAdaptersInfo(NULL, &size)) != ERROR_BUFFER_OVERFLOW)
     {
-        msg(M_INFO, "GetAdaptersInfo #1 failed (status=%u) : %s", (unsigned int)status,
+        msg(M_INFO, "GetAdaptersInfo #1 failed (status=%lu) : %s", status,
             strerror_win32(status, gc));
     }
     else
@@ -4099,7 +4104,7 @@ get_adapter_info_list(struct gc_arena *gc)
         pi = (PIP_ADAPTER_INFO)gc_malloc(size, false, gc);
         if ((status = GetAdaptersInfo(pi, &size)) != NO_ERROR)
         {
-            msg(M_INFO, "GetAdaptersInfo #2 failed (status=%u) : %s", (unsigned int)status,
+            msg(M_INFO, "GetAdaptersInfo #2 failed (status=%lu) : %s", status,
                 strerror_win32(status, gc));
             pi = NULL;
         }
@@ -4118,19 +4123,19 @@ get_per_adapter_info(const DWORD index, struct gc_arena *gc)
     {
         if ((status = GetPerAdapterInfo(index, NULL, &size)) != ERROR_BUFFER_OVERFLOW)
         {
-            msg(M_INFO, "GetPerAdapterInfo #1 failed (status=%u) : %s", (unsigned int)status,
+            msg(M_INFO, "GetPerAdapterInfo #1 failed (status=%lu) : %s", status,
                 strerror_win32(status, gc));
         }
         else
         {
             pi = (PIP_PER_ADAPTER_INFO)gc_malloc(size, false, gc);
-            if ((status = GetPerAdapterInfo((ULONG)index, pi, &size)) == ERROR_SUCCESS)
+            if ((status = GetPerAdapterInfo(index, pi, &size)) == ERROR_SUCCESS)
             {
                 return pi;
             }
             else
             {
-                msg(M_INFO, "GetPerAdapterInfo #2 failed (status=%u) : %s", (unsigned int)status,
+                msg(M_INFO, "GetPerAdapterInfo #2 failed (status=%lu) : %s", status,
                     strerror_win32(status, gc));
             }
         }
@@ -4147,7 +4152,7 @@ get_interface_info_list(struct gc_arena *gc)
 
     if ((status = GetInterfaceInfo(NULL, &size)) != ERROR_INSUFFICIENT_BUFFER)
     {
-        msg(M_INFO, "GetInterfaceInfo #1 failed (status=%u) : %s", (unsigned int)status,
+        msg(M_INFO, "GetInterfaceInfo #1 failed (status=%lu) : %s", status,
             strerror_win32(status, gc));
     }
     else
@@ -4159,7 +4164,7 @@ get_interface_info_list(struct gc_arena *gc)
         }
         else
         {
-            msg(M_INFO, "GetInterfaceInfo #2 failed (status=%u) : %s", (unsigned int)status,
+            msg(M_INFO, "GetInterfaceInfo #2 failed (status=%lu) : %s", status,
                 strerror_win32(status, gc));
         }
     }
@@ -4436,8 +4441,8 @@ adapter_index_of_ip(const IP_ADAPTER_INFO *list, const in_addr_t ip, int *count,
         list = list->Next;
     }
 
-    dmsg(D_ROUTE_DEBUG, "DEBUG: IP Locate: ip=%s nm=%s index=%d count=%d metric=%d",
-         print_in_addr_t(ip, 0, &gc), print_in_addr_t(highest_netmask, 0, &gc), (int)ret,
+    dmsg(D_ROUTE_DEBUG, "DEBUG: IP Locate: ip=%s nm=%s index=%lu count=%d metric=%d",
+         print_in_addr_t(ip, 0, &gc), print_in_addr_t(highest_netmask, 0, &gc), ret,
          count ? *count : -1, lowest_metric);
 
     if (ret == TUN_ADAPTER_INDEX_INVALID && count)
@@ -4506,7 +4511,7 @@ delete_temp_addresses(DWORD index)
             DWORD status;
             const DWORD context = ip->Context;
 
-            if ((status = DeleteIPAddress((ULONG)context)) == NO_ERROR)
+            if ((status = DeleteIPAddress(context)) == NO_ERROR)
             {
                 msg(M_INFO, "Successfully deleted previously set dynamic IP/netmask: %s/%s",
                     ip->IpAddress.String, ip->IpMask.String);
@@ -4517,8 +4522,8 @@ delete_temp_addresses(DWORD index)
                 if (strcmp(ip->IpAddress.String, empty) || strcmp(ip->IpMask.String, empty))
                 {
                     msg(M_INFO,
-                        "NOTE: could not delete previously set dynamic IP/netmask: %s/%s (status=%u)",
-                        ip->IpAddress.String, ip->IpMask.String, (unsigned int)status);
+                        "NOTE: could not delete previously set dynamic IP/netmask: %s/%s (status=%lu)",
+                        ip->IpAddress.String, ip->IpMask.String, status);
                 }
             }
             ip = ip->Next;
@@ -4614,7 +4619,7 @@ static void
 show_adapter(msglvl_t msglevel, const IP_ADAPTER_INFO *a, struct gc_arena *gc)
 {
     msg(msglevel, "%s", a->Description);
-    msg(msglevel, "  Index = %d", (int)a->Index);
+    msg(msglevel, "  Index = %lu", a->Index);
     msg(msglevel, "  GUID = %s", a->AdapterName);
     msg(msglevel, "  IP = %s", format_ip_addr_string(&a->IpAddressList, gc));
     msg(msglevel, "  MAC = %s", format_hex_ex(a->Address, a->AddressLength, 0, 1, ":", gc));
@@ -4790,8 +4795,8 @@ dhcp_release_by_adapter_index(const DWORD adapter_index)
         else
         {
             msg(M_WARN,
-                "NOTE: Release of DHCP-assigned IP address lease on TAP-Windows adapter failed: %s (code=%u)",
-                strerror_win32(status, &gc), (unsigned int)status);
+                "NOTE: Release of DHCP-assigned IP address lease on TAP-Windows adapter failed: %s (code=%lu)",
+                strerror_win32(status, &gc), status);
         }
     }
 
@@ -4831,8 +4836,8 @@ dhcp_renew_by_adapter_index(const DWORD adapter_index)
         else
         {
             msg(M_WARN,
-                "WARNING: Failed to renew DHCP IP address lease on TAP-Windows adapter: %s (code=%u)",
-                strerror_win32(status, &gc), (unsigned int)status);
+                "WARNING: Failed to renew DHCP IP address lease on TAP-Windows adapter: %s (code=%lu)",
+                strerror_win32(status, &gc), status);
         }
     }
     gc_free(&gc);
@@ -4902,10 +4907,10 @@ ipconfig_register_dns(const struct env_set *es)
     msg(D_TUNTAP_INFO, "End ipconfig commands for register-dns...");
 }
 
-void
-ip_addr_string_to_array(in_addr_t *dest, int *dest_len, const IP_ADDR_STRING *src)
+static void
+ip_addr_string_to_array(in_addr_t *dest, unsigned int *dest_len, const IP_ADDR_STRING *src)
 {
-    int i = 0;
+    unsigned int i = 0;
     while (src)
     {
         const unsigned int getaddr_flags = GETADDR_HOST_ORDER;
@@ -4947,11 +4952,11 @@ ip_addr_string_to_array(in_addr_t *dest, int *dest_len, const IP_ADDR_STRING *sr
 }
 
 static bool
-ip_addr_one_to_one(const in_addr_t *a1, const int a1len, const IP_ADDR_STRING *ias)
+ip_addr_one_to_one(const in_addr_t *a1, const unsigned int a1len, const IP_ADDR_STRING *ias)
 {
-    in_addr_t a2[8];
-    int a2len = SIZE(a2);
-    int i;
+#define MAX_ADDRS 8
+    in_addr_t a2[MAX_ADDRS];
+    unsigned int a2len = MAX_ADDRS;
 
     ip_addr_string_to_array(a2, &a2len, ias);
     /*msg (M_INFO, "a1len=%d a2len=%d", a1len, a2len);*/
@@ -4960,7 +4965,7 @@ ip_addr_one_to_one(const in_addr_t *a1, const int a1len, const IP_ADDR_STRING *i
         return false;
     }
 
-    for (i = 0; i < a1len; ++i)
+    for (unsigned int i = 0; i < a1len; ++i)
     {
         if (a1[i] != a2[i])
         {
@@ -4973,12 +4978,11 @@ ip_addr_one_to_one(const in_addr_t *a1, const int a1len, const IP_ADDR_STRING *i
 static bool
 ip_addr_member_of(const in_addr_t addr, const IP_ADDR_STRING *ias)
 {
-    in_addr_t aa[8];
-    int len = SIZE(aa);
-    int i;
+    in_addr_t aa[MAX_ADDRS];
+    unsigned int len = MAX_ADDRS;
 
     ip_addr_string_to_array(aa, &len, ias);
-    for (i = 0; i < len; ++i)
+    for (unsigned int i = 0; i < len; ++i)
     {
         if (addr == aa[i])
         {
@@ -4987,6 +4991,7 @@ ip_addr_member_of(const in_addr_t addr, const IP_ADDR_STRING *ias)
     }
     return false;
 }
+#undef MAX_ADDRS
 
 /**
  * Set the ipv6 dns servers on the specified interface.
@@ -4994,7 +4999,7 @@ ip_addr_member_of(const in_addr_t addr, const IP_ADDR_STRING *ias)
  * are cleared first.
  */
 static void
-netsh_set_dns6_servers(const struct in6_addr *addr_list, const int addr_len, DWORD adapter_index)
+netsh_set_dns6_servers(const struct in6_addr *addr_list, const unsigned int addr_len, DWORD adapter_index)
 {
     struct gc_arena gc = gc_new();
     struct argv argv = argv_new();
@@ -5004,7 +5009,7 @@ netsh_set_dns6_servers(const struct in6_addr *addr_list, const int addr_len, DWO
                 NETSH_PATH_SUFFIX, adapter_index);
     netsh_command(&argv, 2, M_FATAL);
 
-    for (int i = 0; i < addr_len; ++i)
+    for (unsigned int i = 0; i < addr_len; ++i)
     {
         const char *fmt = (i == 0) ? "%s%s interface ipv6 set dns %lu static %s"
                                    : "%s%s interface ipv6 add dns %lu %s";
@@ -5023,7 +5028,7 @@ netsh_set_dns6_servers(const struct in6_addr *addr_list, const int addr_len, DWO
 }
 
 static void
-netsh_ifconfig_options(const char *type, const in_addr_t *addr_list, const int addr_len,
+netsh_ifconfig_options(const char *type, const in_addr_t *addr_list, const unsigned int addr_len,
                        const IP_ADDR_STRING *current, DWORD adapter_index, const bool test_first)
 {
     struct gc_arena gc = gc_new();
@@ -5054,14 +5059,13 @@ netsh_ifconfig_options(const char *type, const in_addr_t *addr_list, const int a
 
     /* add new DNS/WINS settings to TAP interface */
     {
-        int count = 0;
-        int i;
-        for (i = 0; i < addr_len; ++i)
+        bool first = true;
+        for (unsigned int i = 0; i < addr_len; ++i)
         {
             if (delete_first || !test_first || !ip_addr_member_of(addr_list[i], current))
             {
-                const char *fmt = count ? "%s%s interface ip add %s %lu %s"
-                                        : "%s%s interface ip set %s %lu static %s";
+                const char *fmt = first ? "%s%s interface ip set %s %lu static %s"
+                                        : "%s%s interface ip add %s %lu %s";
 
                 argv_printf(&argv, fmt, get_win_sys_path(), NETSH_PATH_SUFFIX, type, adapter_index,
                             print_in_addr_t(addr_list[i], 0, &gc));
@@ -5074,7 +5078,7 @@ netsh_ifconfig_options(const char *type, const in_addr_t *addr_list, const int a
 
                 netsh_command(&argv, 2, M_FATAL);
 
-                ++count;
+                first = false;
             }
             else
             {
@@ -5195,12 +5199,12 @@ service_enable_dhcp(const struct tuntap *tt)
 
     if (ack.error_number != NO_ERROR)
     {
-        msg(M_NONFATAL, "TUN: enabling dhcp using service failed: %s [status=%u if_index=%d]",
+        msg(M_NONFATAL, "TUN: enabling dhcp using service failed: %s [status=%u if_index=%lu]",
             strerror_win32(ack.error_number, &gc), ack.error_number, dhcp.iface.index);
     }
     else
     {
-        msg(M_INFO, "DHCP enabled on interface %d using service", dhcp.iface.index);
+        msg(M_INFO, "DHCP enabled on interface %lu using service", dhcp.iface.index);
         ret = true;
     }
 
@@ -5437,14 +5441,14 @@ tuntap_get_version_info(const struct tuntap *tt)
     if (DeviceIoControl(tt->hand, TAP_WIN_IOCTL_GET_VERSION, &info, sizeof(info), &info,
                         sizeof(info), &len, NULL))
     {
-        msg(D_TUNTAP_INFO, "TAP-Windows Driver Version %d.%d %s", (int)info[0], (int)info[1],
+        msg(D_TUNTAP_INFO, "TAP-Windows Driver Version %lu.%lu %s", info[0], info[1],
             (info[2] ? "(DEBUG)" : ""));
     }
     if (!(info[0] == TAP_WIN_MIN_MAJOR && info[1] >= TAP_WIN_MIN_MINOR))
     {
         msg(M_FATAL,
             "ERROR:  This version of " PACKAGE_NAME
-            " requires a TAP-Windows driver that is at least version %d.%d -- If you recently upgraded your " PACKAGE_NAME
+            " requires a TAP-Windows driver that is at least version %u.%u -- If you recently upgraded your " PACKAGE_NAME
             " distribution, a reboot is probably required at this point to get Windows to see the new driver.",
             TAP_WIN_MIN_MAJOR, TAP_WIN_MIN_MINOR);
     }
@@ -5455,8 +5459,8 @@ tuntap_get_version_info(const struct tuntap *tt)
     if (tt->type == DEV_TYPE_TUN && info[0] == 9 && info[1] < 8)
     {
         msg(M_INFO,
-            "WARNING:  Tap-Win32 driver version %d.%d does not support IPv6 in TUN mode. IPv6 will not work. Upgrade your Tap-Win32 driver.",
-            (int)info[0], (int)info[1]);
+            "WARNING:  Tap-Win32 driver version %lu.%lu does not support IPv6 in TUN mode. IPv6 will not work. Upgrade your Tap-Win32 driver.",
+            info[0], info[1]);
     }
 
     /* tap driver 9.8 (2.2.0 and 2.2.1 release) is buggy
@@ -5464,8 +5468,7 @@ tuntap_get_version_info(const struct tuntap *tt)
     if (tt->type == DEV_TYPE_TUN && info[0] == 9 && info[1] == 8)
     {
         msg(M_FATAL,
-            "ERROR:  Tap-Win32 driver version %d.%d is buggy regarding small IPv4 packets in TUN mode. Upgrade your Tap-Win32 driver.",
-            (int)info[0], (int)info[1]);
+            "ERROR:  Tap-Win32 driver version 9.8 is buggy regarding small IPv4 packets in TUN mode. Upgrade your Tap-Win32 driver.");
     }
 }
 
@@ -5477,7 +5480,7 @@ tuntap_get_mtu(struct tuntap *tt)
     if (DeviceIoControl(tt->hand, TAP_WIN_IOCTL_GET_MTU, &mtu, sizeof(mtu), &mtu, sizeof(mtu), &len,
                         NULL))
     {
-        msg(D_MTU_INFO, "TAP-Windows MTU=%d", (int)mtu);
+        msg(D_MTU_INFO, "TAP-Windows MTU=%lu", mtu);
     }
 }
 
@@ -5490,7 +5493,7 @@ tuntap_set_ip_addr(struct tuntap *tt, const char *device_guid, bool dhcp_masq_po
     /* flush arp cache */
     if (tt->backend_driver == WINDOWS_DRIVER_TAP_WINDOWS6 && index != TUN_ADAPTER_INDEX_INVALID)
     {
-        DWORD status = -1;
+        DWORD status = (DWORD)-1;
 
         if (tt->options.msg_channel)
         {
@@ -5514,7 +5517,7 @@ tuntap_set_ip_addr(struct tuntap *tt, const char *device_guid, bool dhcp_masq_po
         {
             msg(M_INFO, "Successful ARP Flush on interface [%lu] %s", index, device_guid);
         }
-        else if (status != -1)
+        else if (status != (DWORD)-1)
         {
             msg(D_TUNTAP_INFO,
                 "NOTE: FlushIpNetTable failed on interface [%lu] %s (status=%lu) : %s", index,
@@ -5769,13 +5772,10 @@ tun_try_open_device(struct tuntap *tt, const char *device_guid,
                 continue;
             }
 
-            if (tt->backend_driver == DRIVER_DCO)
+            const char *last_sep = strrchr(dev_if->device_interface, '\\');
+            if (!last_sep || strcmp(last_sep + 1, DCO_WIN_REFERENCE_STRING) != 0)
             {
-                char *last_sep = strrchr(dev_if->device_interface, '\\');
-                if (!last_sep || strcmp(last_sep + 1, DCO_WIN_REFERENCE_STRING) != 0)
-                {
-                    continue;
-                }
+                continue;
             }
 
             path = dev_if->device_interface;
@@ -6070,7 +6070,7 @@ netsh_delete_address_dns(const struct tuntap *tt, bool ipv6, struct gc_arena *gc
     struct argv argv = argv_new();
 
     /* delete ipvX dns servers if any were set */
-    int len = ipv6 ? tt->options.dns6_len : tt->options.dns_len;
+    unsigned int len = ipv6 ? tt->options.dns6_len : tt->options.dns_len;
     if (len > 0)
     {
         argv_printf(&argv, "%s%s interface %s delete dns %lu all", get_win_sys_path(),
@@ -6208,11 +6208,12 @@ close_tun(struct tuntap *tt, openvpn_net_ctx_t *ctx)
     if (tt->ipapi_context_defined)
     {
         DWORD status;
+
         if ((status = DeleteIPAddress(tt->ipapi_context)) != NO_ERROR)
         {
             msg(M_WARN,
-                "Warning: DeleteIPAddress[%u] failed on TAP-Windows adapter, status=%u : %s",
-                (unsigned int)tt->ipapi_context, (unsigned int)status, strerror_win32(status, &gc));
+                "Warning: DeleteIPAddress[%lu] failed on TAP-Windows adapter, status=%lu : %s",
+                tt->ipapi_context, status, strerror_win32(status, &gc));
         }
     }
 

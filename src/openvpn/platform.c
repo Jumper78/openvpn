@@ -550,9 +550,8 @@ platform_create_temp_file(const char *directory, const char *prefix, struct gc_a
     {
         ++attempts;
 
-        const int ret = snprintf(fname, sizeof(fname), fname_fmt, max_prefix_len, prefix,
-                                 (unsigned long)get_random(), (unsigned long)get_random());
-        if (ret < 0 || ret >= sizeof(fname))
+        if (!checked_snprintf(fname, sizeof(fname), fname_fmt, max_prefix_len, prefix,
+                              (unsigned long)get_random(), (unsigned long)get_random()))
         {
             msg(M_WARN, "ERROR: temporary filename too long");
             return NULL;
@@ -573,7 +572,7 @@ platform_create_temp_file(const char *directory, const char *prefix, struct gc_a
             close(fd);
             return retfname;
         }
-        else if (fd == -1 && errno != EEXIST)
+        else if (errno != EEXIST)
         {
             /* Something else went wrong, no need to retry.  */
             msg(M_WARN | M_ERRNO, "Could not create temporary file '%s'", retfname);

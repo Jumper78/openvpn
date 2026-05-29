@@ -235,7 +235,7 @@ status_printf(struct status_output *so, const char *format, ...)
         if (so->fd >= 0 && !so->errors)
         {
             strcat(buf, "\n");
-            size_t len = strlen(buf);
+            ssize_t len = strlen(buf);
             if (len > 0)
             {
                 if (write(so->fd, buf, (unsigned int)len) != len)

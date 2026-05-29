@@ -112,12 +112,12 @@ if (MSVC)
         add_link_options("$<$<CONFIG:Release>:/CETCOMPAT>")
     endif()
 else ()
-    add_compile_options(-Wall -Wuninitialized)
+    add_compile_options(-Wall)
     check_and_add_compiler_flag(-Wno-stringop-truncation NoStringOpTruncation)
     check_and_add_compiler_flag(-Wstrict-prototypes StrictPrototypes)
     check_and_add_compiler_flag(-Wold-style-definition OldStyleDefinition)
     add_compile_options(-Wconversion -Wno-sign-conversion)
-    add_compile_options(-Wextra -Wno-sign-compare -Wno-unused-parameter)
+    add_compile_options(-Wextra -Wno-unused-parameter)
     # clang doesn't have the different levels but also doesn't include it in -Wextra
     check_and_add_compiler_flag(-Wimplicit-fallthrough=2 GCCImplicitFallthrough)
     if (WIN32)
@@ -140,6 +140,10 @@ set(OPENVPN_VERSION_MAJOR ${PRODUCT_VERSION_MAJOR})
 set(OPENVPN_VERSION_MINOR ${PRODUCT_VERSION_MINOR})
 set(OPENVPN_VERSION_PATCH ${PRODUCT_VERSION_PATCH})
 set(OPENVPN_VERSION_RESOURCE ${PRODUCT_VERSION_RESOURCE})
+
+set(TAP_WIN_COMPONENT_ID "${PRODUCT_TAP_WIN_COMPONENT_ID}")
+set(TAP_WIN_MIN_MAJOR ${PRODUCT_TAP_WIN_MIN_MAJOR})
+set(TAP_WIN_MIN_MINOR ${PRODUCT_TAP_WIN_MIN_MINOR})
 
 set(CMAKE_C_STANDARD 11)
 
@@ -502,8 +506,6 @@ set(SOURCE_FILES
     src/openvpn/multi.h
     src/openvpn/multi_io.h
     src/openvpn/multi_io.c
-    src/openvpn/ntlm.c
-    src/openvpn/ntlm.h
     src/openvpn/occ.c
     src/openvpn/occ.h
     src/openvpn/openvpn.c

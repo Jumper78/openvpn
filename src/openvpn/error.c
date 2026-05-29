@@ -100,7 +100,7 @@ msg_forked(void)
 bool
 set_debug_level(const int level, const unsigned int flags)
 {
-    if (level >= 0 && level <= M_DEBUG_LEVEL)
+    if (level >= 0 && (unsigned int)level <= M_DEBUG_LEVEL)
     {
         x_debug_level = (msglvl_t)level;
         return true;
@@ -660,15 +660,22 @@ x_check_status(ssize_t status, const char *description, struct link_socket *sock
         {
             if (extended_msg)
             {
-                msg(x_cs_info_level, "%s %s [%s]: %s (fd=" SOCKET_PRINTF ",code=%d)", description,
-                    sock ? proto2ascii(sock->info.proto, sock->info.af, true) : "", extended_msg,
-                    openvpn_strerror(my_errno, crt_error, &gc), sock ? sock->sd : -1, my_errno);
+                msg(x_cs_info_level, "%s %s [%s]: %s (fd=" SOCKET_PRINTF ",code=%d)",
+                    description,
+                    sock ? proto2ascii(sock->info.proto, sock->info.af, true) : "",
+                    extended_msg,
+                    openvpn_strerror(my_errno, crt_error, &gc),
+                    sock ? sock->sd : SOCKET_UNDEFINED,
+                    my_errno);
             }
             else
             {
-                msg(x_cs_info_level, "%s %s: %s (fd=" SOCKET_PRINTF ",code=%d)", description,
+                msg(x_cs_info_level, "%s %s: %s (fd=" SOCKET_PRINTF ",code=%d)",
+                    description,
                     sock ? proto2ascii(sock->info.proto, sock->info.af, true) : "",
-                    openvpn_strerror(my_errno, crt_error, &gc), sock ? sock->sd : -1, my_errno);
+                    openvpn_strerror(my_errno, crt_error, &gc),
+                    sock ? sock->sd : SOCKET_UNDEFINED,
+                    my_errno);
             }
 
             if (x_cs_err_delay_ms)

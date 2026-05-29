@@ -95,23 +95,41 @@ struct link_socket_info
     int mtu_changed; /* Set to true when mtu value is changed */
 };
 
-/*
- * Used to extract packets encapsulated in streams into a buffer,
- * in this case IP packets embedded in a TCP stream.
+/**
+ * struct used to extract packets encapsulated in streams into a buffer,
+ * in this case OpenVPN packets (data or control) embedded in a TCP stream.
+ *
+ * This struct is used to packetise the TCP stream into the
+ * OpenVPN packet. Each OpenVPN packet has a two-byte header determining
+ * the length of the packet.
  */
 struct stream_buf
 {
+    /* Buffer to hold the initial buffer that will be used to reset buf */
     struct buffer buf_init;
+
+    /** buffer holding the excess bytes that are not part of the
+     *  packet. */
     struct buffer residual;
+
+    /** Maximum length of a packet that we accept */
     int maxlen;
+
+    /** The buffer in buf contains a full packet without a header. Any
+     * extra data is in residual */
     bool residual_fully_formed;
 
+    /** Holds the data of the current packet. This might be a partial packet */
     struct buffer buf;
-    struct buffer next;
-    int len;    /* -1 if not yet known */
 
-    bool error; /* if true, fatal TCP error has occurred,
-                 *  requiring that connection be restarted */
+    /** -1 if not yet known. Otherwise holds the length of the
+     *   packet. If >= 0, buf is already moved past the initial
+     *  size header */
+    int len;
+
+    /** if true, a fatal TCP error has occurred,
+     *  requiring that connection be restarted */
+    bool error;
 #if PORT_SHARE
 #define PS_DISABLED 0
 #define PS_ENABLED  1
@@ -528,14 +546,24 @@ link_socket_set_outgoing_addr(struct link_socket_info *info, const struct link_s
     }
 }
 
-bool stream_buf_read_setup_dowork(struct link_socket *sock);
+/**
+ * Will try to check if the buffers in stream form a
+ * full packet. Will return true if further reads are
+ * required and false otherwise. (full packet is ready)
+ *
+ * With UDP we always return true as there is no reassembly.
+ *
+ * @param sb    the stream buffer that should be worked on
+ * @return      true if more reads are required.
+ */
+bool stream_buf_read_setup_dowork(struct stream_buf *sb);
 
 static inline bool
 stream_buf_read_setup(struct link_socket *sock)
 {
     if (link_socket_connection_oriented(sock))
     {
-        return stream_buf_read_setup_dowork(sock);
+        return stream_buf_read_setup_dowork(&sock->stream_buf);
     }
     else
     {
@@ -680,14 +708,14 @@ link_socket_write_udp_posix(struct link_socket *sock, struct buffer *buf,
     }
     else
 #endif
-        return sendto(sock->sd, BPTR(buf), BLEN(buf), 0, (struct sockaddr *)&to->dest.addr.sa,
+        return sendto(sock->sd, BPTR(buf), BLENZ(buf), 0, (struct sockaddr *)&to->dest.addr.sa,
                       (socklen_t)af_addr_size(to->dest.addr.sa.sa_family));
 }
 
 static inline ssize_t
 link_socket_write_tcp_posix(struct link_socket *sock, struct buffer *buf)
 {
-    return send(sock->sd, BPTR(buf), BLEN(buf), MSG_NOSIGNAL);
+    return send(sock->sd, BPTR(buf), BLENZ(buf), MSG_NOSIGNAL);
 }
 
 #endif /* ifdef _WIN32 */

@@ -48,14 +48,6 @@
 #define MULTI_IO_DCO              ((void *)6)
 #define MULTI_IO_IPV6_PD          ((void *)7)
 
-struct ta_iow_flags
-{
-    unsigned int flags;
-    unsigned int ret;
-    unsigned int tun;
-    unsigned int sock;
-};
-
 #ifdef ENABLE_DEBUG
 static const char *
 pract(int action)

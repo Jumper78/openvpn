@@ -293,7 +293,7 @@ argv_prep_format(const char *format, const char delim, size_t *count, struct gc_
 
     bool in_token = false;
     char *f = gc_malloc(strlen(format) + 1, true, gc);
-    for (int i = 0, j = 0; i < strlen(format); i++)
+    for (size_t i = 0, j = 0; i < strlen(format); i++)
     {
         if (format[i] == ' ')
         {
@@ -384,7 +384,7 @@ argv_printf_arglist(struct argv *argres, const char *format, va_list arglist)
      *  Do the actual vsnprintf() operation, which expands the format
      *  string with the provided arguments.
      */
-    size_t size = len + 1;
+    int size = len + 1;
     char *buf = gc_malloc(size, false, &argres->gc);
     len = vsnprintf(buf, size, f, arglist);
     if (len < 0 || len >= size)

@@ -829,13 +829,13 @@ dco_get_peer_stats_multi(dco_context_t *dco, const bool raise_sigusr1_on_err)
     }
 
     /* iterate over stats and update peers */
-    for (int i = 0; i < bytes_returned / sizeof(OVPN_PEER_STATS); ++i)
+    for (size_t i = 0; i < bytes_returned / sizeof(OVPN_PEER_STATS); ++i)
     {
         OVPN_PEER_STATS *stat = &peer_stats[i];
 
-        if (stat->PeerId >= dco->c->multi->max_clients)
+        if (stat->PeerId >= (int)dco->c->multi->max_clients)
         {
-            msg(M_WARN, "%s: received out of bound peer_id %u (max=%u)", __func__, stat->PeerId,
+            msg(M_WARN, "%s: received out of bound peer_id %d (max=%u)", __func__, stat->PeerId,
                 dco->c->multi->max_clients);
             continue;
         }

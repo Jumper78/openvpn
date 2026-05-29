@@ -45,7 +45,7 @@
  * @return              True if parsing was successful
  */
 static bool
-dns_server_port_parse(in_port_t *port, char *port_str)
+dns_server_port_parse(in_port_t *port, const char *port_str)
 {
     char *endptr;
     errno = 0;
@@ -71,8 +71,8 @@ dns_server_addr_parse(struct dns_server *server, const char *addr)
     in_port_t port = 0;
     sa_family_t af;
 
-    char *first_colon = strchr(addr, ':');
-    char *last_colon = strrchr(addr, ':');
+    const char *first_colon = strchr(addr, ':');
+    const char *last_colon = strrchr(addr, ':');
 
     if (!first_colon || first_colon == last_colon)
     {
@@ -93,7 +93,7 @@ dns_server_addr_parse(struct dns_server *server, const char *addr)
         if (addr[0] == '[')
         {
             addr += 1;
-            char *bracket = last_colon - 1;
+            const char *bracket = last_colon - 1;
             if (*bracket != ']' || bracket == addr || !dns_server_port_parse(&port, last_colon + 1))
             {
                 return false;
@@ -442,7 +442,7 @@ run_up_down_service(bool add, const struct options *o, const struct tuntap *tt)
         .header = { (add ? msg_add_nrpt_cfg : msg_del_nrpt_cfg), sizeof(nrpt_dns_cfg_message_t),
                     0 },
         .iface = { .index = tt->adapter_index, .name = "" },
-        .flags = server->dnssec == DNS_SECURITY_NO ? 0 : nrpt_dnssec,
+        .flags = server->dnssec == DNS_SECURITY_YES ? nrpt_dnssec : 0,
     };
     strncpynt(nrpt.iface.name, tt->actual_name, sizeof(nrpt.iface.name));
 
@@ -468,9 +468,10 @@ run_up_down_service(bool add, const struct options *o, const struct tuntap *tt)
     make_domain_list("dns search domains", search_domains, false, nrpt.search_domains,
                      sizeof(nrpt.search_domains));
 
-    msg(D_LOW, "%s NRPT DNS%s%s on '%s' (if_index = %d) using service",
+    msg(D_LOW, "%s NRPT DNS%s%s on '%s' (if_index = %lu) using service",
         (add ? "Setting" : "Deleting"), nrpt.resolve_domains[0] != 0 ? ", resolve domains" : "",
-        nrpt.search_domains[0] != 0 ? ", search domains" : "", nrpt.iface.name, nrpt.iface.index);
+        nrpt.search_domains[0] != 0 ? ", search domains" : "",
+        nrpt.iface.name, nrpt.iface.index);
 
     send_msg_iservice(o->msg_channel, &nrpt, sizeof(nrpt), &ack, "DNS");
 }
@@ -478,20 +479,18 @@ run_up_down_service(bool add, const struct options *o, const struct tuntap *tt)
 #else  /* ifdef _WIN32 */
 
 static void
-setenv_dns_option(struct env_set *es, const char *format, int i, int j, const char *value)
+setenv_dns_option(struct env_set *es, const char *format, size_t i, size_t j, const char *value)
 {
     char name[64];
     bool name_ok = false;
 
-    if (j < 0)
+    if (j == 0)
     {
-        const int ret = snprintf(name, sizeof(name), format, i);
-        name_ok = (ret > 0 && ret < sizeof(name));
+        name_ok = checked_snprintf(name, sizeof(name), format, i);
     }
     else
     {
-        const int ret = snprintf(name, sizeof(name), format, i, j);
-        name_ok = (ret > 0 && ret < sizeof(name));
+        name_ok = checked_snprintf(name, sizeof(name), format, i, j);
     }
 
     if (!name_ok)
@@ -508,11 +507,11 @@ setenv_dns_options(const struct dns_options *o, struct env_set *es)
     struct gc_arena gc = gc_new();
     const struct dns_server *s;
     const struct dns_domain *d;
-    int i, j;
+    size_t i, j;
 
     for (i = 1, d = o->search_domains; d != NULL; i++, d = d->next)
     {
-        setenv_dns_option(es, "dns_search_domain_%d", i, -1, d->name);
+        setenv_dns_option(es, "dns_search_domain_%zu", i, 0, d->name);
     }
 
     for (i = 1, s = o->servers; s != NULL; i++, s = s->next)
@@ -521,17 +520,17 @@ setenv_dns_options(const struct dns_options *o, struct env_set *es)
         {
             if (s->addr[j].family == AF_INET)
             {
-                setenv_dns_option(es, "dns_server_%d_address_%d", i, j + 1,
+                setenv_dns_option(es, "dns_server_%zu_address_%zu", i, j + 1,
                                   print_in_addr_t(s->addr[j].in.a4.s_addr, IA_NET_ORDER, &gc));
             }
             else
             {
-                setenv_dns_option(es, "dns_server_%d_address_%d", i, j + 1,
+                setenv_dns_option(es, "dns_server_%zu_address_%zu", i, j + 1,
                                   print_in6_addr(s->addr[j].in.a6, 0, &gc));
             }
             if (s->addr[j].port)
             {
-                setenv_dns_option(es, "dns_server_%d_port_%d", i, j + 1,
+                setenv_dns_option(es, "dns_server_%zu_port_%zu", i, j + 1,
                                   print_in_port_t(s->addr[j].port, &gc));
             }
         }
@@ -540,22 +539,22 @@ setenv_dns_options(const struct dns_options *o, struct env_set *es)
         {
             for (j = 1, d = s->domains; d != NULL; j++, d = d->next)
             {
-                setenv_dns_option(es, "dns_server_%d_resolve_domain_%d", i, j, d->name);
+                setenv_dns_option(es, "dns_server_%zu_resolve_domain_%zu", i, j, d->name);
             }
         }
 
         if (s->dnssec)
         {
-            setenv_dns_option(es, "dns_server_%d_dnssec", i, -1, dnssec_value(s->dnssec));
+            setenv_dns_option(es, "dns_server_%zu_dnssec", i, 0, dnssec_value(s->dnssec));
         }
 
         if (s->transport)
         {
-            setenv_dns_option(es, "dns_server_%d_transport", i, -1, transport_value(s->transport));
+            setenv_dns_option(es, "dns_server_%zu_transport", i, 0, transport_value(s->transport));
         }
         if (s->sni)
         {
-            setenv_dns_option(es, "dns_server_%d_sni", i, -1, s->sni);
+            setenv_dns_option(es, "dns_server_%zu_sni", i, 0, s->sni);
         }
     }
 
@@ -611,13 +610,13 @@ run_updown_runner(bool up, struct options *o, const struct tuntap *tt,
     int ack_pipe_fd[2];
     if (pipe(dns_pipe_fd) != 0 || pipe(ack_pipe_fd) != 0)
     {
-        msg(M_ERR | M_ERRNO, "run_dns_up_down: unable to create pipes");
+        msg(M_WARN | M_ERRNO, "run_dns_up_down: unable to create pipes");
         return false;
     }
     updown_runner->pid = fork();
     if (updown_runner->pid == -1)
     {
-        msg(M_ERR | M_ERRNO, "run_dns_up_down: unable to fork");
+        msg(M_WARN | M_ERRNO, "run_dns_up_down: unable to fork");
         close(dns_pipe_fd[0]);
         close(dns_pipe_fd[1]);
         close(ack_pipe_fd[0]);
@@ -747,7 +746,7 @@ run_up_down_command(bool up, struct options *o, const struct tuntap *tt,
                 {
                     continue;
                 }
-                msg(M_ERR | M_ERRNO, "could not send dns vars filename");
+                msg(M_WARN | M_ERRNO, "could not send dns vars filename");
             }
             break;
         }
@@ -762,7 +761,7 @@ run_up_down_command(bool up, struct options *o, const struct tuntap *tt,
                 {
                     continue;
                 }
-                msg(M_ERR | M_ERRNO, "could not receive dns updown status");
+                msg(M_WARN | M_ERRNO, "could not receive dns updown status");
             }
             break;
         }
@@ -787,7 +786,7 @@ show_dns_options(const struct dns_options *o)
     {
         msg(D_SHOW_PARMS, "  DNS server #%d:", i++);
 
-        for (int j = 0; j < server->addr_count; ++j)
+        for (size_t j = 0; j < server->addr_count; ++j)
         {
             const char *addr;
             const char *fmt_port;

@@ -70,7 +70,7 @@ crypto_pem_encode_decode_loopback(void **state)
 
     assert_true(crypto_pem_decode("TESTKEYNAME", &dec_buf, &pem_buf));
     assert_int_equal(BLEN(&src_buf), BLEN(&dec_buf));
-    assert_memory_equal(BPTR(&src_buf), BPTR(&dec_buf), BLEN(&src_buf));
+    assert_memory_equal(BPTR(&src_buf), BPTR(&dec_buf), BLENZ(&src_buf));
 
     gc_free(&gc);
 }
@@ -101,7 +101,7 @@ test_cipher_names(const char *ciphername, const char *openvpn_name)
     char *lower = string_alloc(ciphername, &gc);
     char *random_case = string_alloc(ciphername, &gc);
 
-    for (int i = 0; i < strlen(ciphername); i++)
+    for (size_t i = 0; i < strlen(ciphername); i++)
     {
         upper[i] = (char)toupper((unsigned char)ciphername[i]);
         lower[i] = (char)tolower((unsigned char)ciphername[i]);
@@ -963,15 +963,5 @@ main(void)
         cmocka_unit_test(epoch_test_derive_data_key)
     };
 
-#if defined(ENABLE_CRYPTO_OPENSSL)
-    OpenSSL_add_all_algorithms();
-#endif
-
-    int ret = cmocka_run_group_tests_name("crypto tests", tests, NULL, NULL);
-
-#if defined(ENABLE_CRYPTO_OPENSSL)
-    EVP_cleanup();
-#endif
-
-    return ret;
+    return cmocka_run_group_tests_name("crypto tests", tests, NULL, NULL);
 }

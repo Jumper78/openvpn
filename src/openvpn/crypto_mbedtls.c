@@ -160,7 +160,7 @@ cipher_valid_reason(const char *ciphername, const char **reason)
     if (cipher_info->key_bytes > MAX_CIPHER_KEY_LENGTH)
     {
         msg(D_LOW,
-            "Cipher algorithm '%s' uses a default key size (%d bytes) "
+            "Cipher algorithm '%s' uses a default key size (%u bytes) "
             "which is larger than " PACKAGE_NAME "'s current maximum key size "
             "(%d bytes)",
             ciphername, cipher_info->key_bytes, MAX_CIPHER_KEY_LENGTH);
@@ -183,7 +183,7 @@ cipher_kt_name(const char *ciphername)
     return cipher_info->name;
 }
 
-int
+unsigned int
 cipher_kt_key_size(const char *ciphername)
 {
     const cipher_info_t *cipher_info = cipher_get(ciphername);
@@ -194,7 +194,7 @@ cipher_kt_key_size(const char *ciphername)
     return cipher_info->key_bytes;
 }
 
-int
+unsigned int
 cipher_kt_iv_size(const char *ciphername)
 {
     const cipher_info_t *cipher_info = cipher_get(ciphername);
@@ -206,7 +206,7 @@ cipher_kt_iv_size(const char *ciphername)
     return cipher_info->iv_bytes;
 }
 
-int
+unsigned int
 cipher_kt_block_size(const char *ciphername)
 {
     const cipher_info_t *cipher_info = cipher_get(ciphername);
@@ -217,7 +217,7 @@ cipher_kt_block_size(const char *ciphername)
     return cipher_info->block_size;
 }
 
-int
+unsigned int
 cipher_kt_tag_size(const char *ciphername)
 {
     if (cipher_kt_mode_aead(ciphername))
@@ -310,20 +310,20 @@ cipher_ctx_init(cipher_ctx_t *ctx, const uint8_t *key, const char *ciphername,
 
     psa_set_key_type(&ctx->key_attributes, ctx->cipher_info->psa_key_type);
     psa_set_key_algorithm(&ctx->key_attributes, ctx->cipher_info->psa_alg);
-    psa_set_key_bits(&ctx->key_attributes, (size_t)ctx->cipher_info->key_bytes * 8);
+    psa_set_key_bits(&ctx->key_attributes, ctx->cipher_info->key_bytes * 8);
     psa_set_key_usage_flags(&ctx->key_attributes,
                             enc == OPENVPN_OP_ENCRYPT ? PSA_KEY_USAGE_ENCRYPT : PSA_KEY_USAGE_DECRYPT);
 
-    if (psa_import_key(&ctx->key_attributes, key, (size_t)ctx->cipher_info->key_bytes, &ctx->key) != PSA_SUCCESS)
+    if (psa_import_key(&ctx->key_attributes, key, ctx->cipher_info->key_bytes, &ctx->key) != PSA_SUCCESS)
     {
         msg(M_FATAL, "psa_import_key failed");
     }
 
     /* make sure we used a big enough key */
-    ASSERT(psa_get_key_bits(&ctx->key_attributes) == (size_t)(8 * ctx->cipher_info->key_bytes));
+    ASSERT(psa_get_key_bits(&ctx->key_attributes) == (8 * ctx->cipher_info->key_bytes));
 }
 
-int
+unsigned int
 cipher_ctx_iv_length(const cipher_ctx_t *ctx)
 {
     return ctx->cipher_info->iv_bytes;
@@ -341,7 +341,7 @@ cipher_ctx_get_tag(cipher_ctx_t *ctx, uint8_t *tag, int tag_len)
     return 1;
 }
 
-int
+unsigned int
 cipher_ctx_block_size(const cipher_ctx_t *ctx)
 {
     return ctx->cipher_info->block_size;
@@ -696,28 +696,6 @@ md_ctx_new(void)
     return ctx;
 }
 
-int
-md_full(const char *mdname, const uint8_t *src, int src_len, uint8_t *dst)
-{
-    const md_info_t *md = md_get(mdname);
-    if (md == NULL || src_len < 0)
-    {
-        return 0;
-    }
-
-    /* We depend on the caller to ensure that dst has enough room for the hash,
-     * so we just tell PSA that it can hold the appropriate amount of bytes. */
-    size_t dst_size = PSA_HASH_LENGTH(md->psa_alg);
-    size_t hash_length = 0;
-
-    psa_status_t status = psa_hash_compute(md->psa_alg, src, (size_t)src_len, dst, dst_size, &hash_length);
-    if (status != PSA_SUCCESS || hash_length != dst_size)
-    {
-        return 0;
-    }
-    return 1;
-}
-
 void
 md_ctx_free(md_ctx_t *ctx)
 {
@@ -1014,7 +992,7 @@ mbed_log_func_line(unsigned int flags, int errval, const char *func, int line)
 {
     char prefix[256];
 
-    if (snprintf(prefix, sizeof(prefix), "%s:%d", func, line) >= sizeof(prefix))
+    if (!checked_snprintf(prefix, sizeof(prefix), "%s:%d", func, line))
     {
         return mbed_log_err(flags, errval, func);
     }
@@ -1104,11 +1082,11 @@ crypto_pem_encode(const char *name, struct buffer *dst, const struct buffer *src
     char header[1000 + 1] = { 0 };
     char footer[1000 + 1] = { 0 };
 
-    if (snprintf(header, sizeof(header), "-----BEGIN %s-----\n", name) >= sizeof(header))
+    if (!checked_snprintf(header, sizeof(header), "-----BEGIN %s-----\n", name))
     {
         return false;
     }
-    if (snprintf(footer, sizeof(footer), "-----END %s-----\n", name) >= sizeof(footer))
+    if (!checked_snprintf(footer, sizeof(footer), "-----END %s-----\n", name))
     {
         return false;
     }
@@ -1142,11 +1120,11 @@ crypto_pem_decode(const char *name, struct buffer *dst, const struct buffer *src
     char header[1000 + 1] = { 0 };
     char footer[1000 + 1] = { 0 };
 
-    if (snprintf(header, sizeof(header), "-----BEGIN %s-----", name) >= sizeof(header))
+    if (!checked_snprintf(header, sizeof(header), "-----BEGIN %s-----", name))
     {
         return false;
     }
-    if (snprintf(footer, sizeof(footer), "-----END %s-----", name) >= sizeof(footer))
+    if (!checked_snprintf(footer, sizeof(footer), "-----END %s-----", name))
     {
         return false;
     }

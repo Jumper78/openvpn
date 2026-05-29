@@ -159,7 +159,7 @@ ovpn_nl_recvmsgs(dco_context_t *dco, const char *prefix)
             break;
 
         case -NLE_OBJ_NOTFOUND:
-            msg(M_INFO, "%s: netlink reports object not found, ovpn-dco unloaded?", prefix);
+            msg(M_INFO, "%s: netlink reports object not found, ovpn kernel module unloaded?", prefix);
             break;
 
         default:
@@ -612,7 +612,8 @@ dco_new_key(dco_context_t *dco, unsigned int peerid, int keyid, dco_key_slot_t s
     msg(D_DCO_DEBUG, "%s: slot %d, key-id %d, peer-id %d, cipher %s, epoch %d", __func__, slot, keyid, peerid,
         ciphername, epoch);
 
-    const int key_len = cipher_kt_key_size(ciphername);
+    const size_t key_len = cipher_kt_key_size(ciphername);
+    ASSERT(key_len <= INT_MAX);
     const int nonce_tail_len = 8;
 
     struct nl_msg *nl_msg = ovpn_dco_nlmsg_create(dco, OVPN_CMD_KEY_NEW);
@@ -634,7 +635,7 @@ dco_new_key(dco_context_t *dco, unsigned int peerid, int keyid, dco_key_slot_t s
     struct nlattr *key_enc = nla_nest_start(nl_msg, OVPN_A_KEYCONF_ENCRYPT_DIR);
     if (dco_cipher != OVPN_CIPHER_ALG_NONE)
     {
-        NLA_PUT(nl_msg, OVPN_A_KEYDIR_CIPHER_KEY, key_len, encrypt_key);
+        NLA_PUT(nl_msg, OVPN_A_KEYDIR_CIPHER_KEY, (int)key_len, encrypt_key);
         NLA_PUT(nl_msg, OVPN_A_KEYDIR_NONCE_TAIL, nonce_tail_len, encrypt_iv);
     }
     nla_nest_end(nl_msg, key_enc);
@@ -642,7 +643,7 @@ dco_new_key(dco_context_t *dco, unsigned int peerid, int keyid, dco_key_slot_t s
     struct nlattr *key_dec = nla_nest_start(nl_msg, OVPN_A_KEYCONF_DECRYPT_DIR);
     if (dco_cipher != OVPN_CIPHER_ALG_NONE)
     {
-        NLA_PUT(nl_msg, OVPN_A_KEYDIR_CIPHER_KEY, key_len, decrypt_key);
+        NLA_PUT(nl_msg, OVPN_A_KEYDIR_CIPHER_KEY, (int)key_len, decrypt_key);
         NLA_PUT(nl_msg, OVPN_A_KEYDIR_NONCE_TAIL, nonce_tail_len, decrypt_iv);
     }
     nla_nest_end(nl_msg, key_dec);
@@ -884,7 +885,7 @@ ovpn_handle_peer(dco_context_t *dco, struct nlattr *attrs[])
     if (dco->ifmode == OVPN_MODE_P2P)
     {
         c2 = &dco->c->c2;
-        if (c2->tls_multi->dco_peer_id != peer_id)
+        if (c2->tls_multi->dco_peer_id != (int)peer_id)
         {
             return NL_SKIP;
         }
@@ -1239,7 +1240,10 @@ dco_available(msglvl_t msglevel)
 {
     if (resolve_ovpn_netlink_id(D_DCO_DEBUG) < 0)
     {
-        msg(msglevel, "Note: Kernel support for ovpn-dco missing, disabling data channel offload.");
+        msg(msglevel, "Note: Kernel support for ovpn interfaces missing, "
+                      "disabling data channel offload. Use Linux 6.16.0 or "
+                      "newer with ovpn support or use ovpn-backports for "
+                      "interface support.");
         return false;
     }
 

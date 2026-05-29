@@ -124,15 +124,6 @@ struct sitnl_route_req
 typedef int (*sitnl_parse_reply_cb)(struct nlmsghdr *msg, void *arg);
 
 /**
- * Object returned by route request operation
- */
-struct sitnl_route_data_cb
-{
-    unsigned int iface;
-    inet_address_t gw;
-};
-
-/**
  * Helper function used to easily add attributes to a rtnl message
  */
 static int
@@ -388,7 +379,7 @@ sitnl_send(struct nlmsghdr *payload, pid_t peer, unsigned int groups, sitnl_pars
             if (h->nlmsg_type == NLMSG_ERROR)
             {
                 err = (struct nlmsgerr *)NLMSG_DATA(h);
-                if (rem_len < sizeof(struct nlmsgerr))
+                if (rem_len < (int)sizeof(struct nlmsgerr))
                 {
                     msg(M_WARN, "%s: ERROR truncated", __func__);
                     ret = -EIO;
@@ -1337,7 +1328,15 @@ net_iface_new(openvpn_net_ctx_t *ctx, const char *iface, const char *type, void 
     {
         dco_context_t *dco = arg;
         struct rtattr *data = SITNL_NEST(&req.n, sizeof(req), IFLA_INFO_DATA);
-        SITNL_ADDATTR(&req.n, sizeof(req), IFLA_OVPN_MODE, &dco->ifmode, sizeof(uint8_t));
+
+        /* the netlink format is uint8_t for this and using something
+         * other than uint8_t here (enum underlying type is undefined but
+         * commonly int) causes the values to be 0 when passed
+         * on big endian arch as we only take the (biggest endian) byte
+         * directly at the address
+         */
+        uint8_t ifmode = (uint8_t)dco->ifmode;
+        SITNL_ADDATTR(&req.n, sizeof(req), IFLA_OVPN_MODE, &ifmode, sizeof(uint8_t));
         SITNL_NEST_END(&req.n, data);
     }
 #endif
@@ -1352,7 +1351,7 @@ err:
     return ret;
 }
 
-static int
+static void
 sitnl_parse_rtattr_flags(struct rtattr *tb[], size_t max, struct rtattr *rta, size_t len,
                          unsigned short flags)
 {
@@ -1376,14 +1375,12 @@ sitnl_parse_rtattr_flags(struct rtattr *tb[], size_t max, struct rtattr *rta, si
     {
         msg(D_ROUTE, "%s: %zu bytes not parsed! (rta_len=%u)", __func__, len, rta->rta_len);
     }
-
-    return 0;
 }
 
-static int
+static void
 sitnl_parse_rtattr(struct rtattr *tb[], size_t max, struct rtattr *rta, size_t len)
 {
-    return sitnl_parse_rtattr_flags(tb, max, rta, len, 0);
+    sitnl_parse_rtattr_flags(tb, max, rta, len, 0);
 }
 
 #define sitnl_parse_rtattr_nested(tb, max, rta) \
@@ -1395,23 +1392,14 @@ sitnl_type_save(struct nlmsghdr *n, void *arg)
     char *type = arg;
     struct ifinfomsg *ifi = NLMSG_DATA(n);
     struct rtattr *tb[IFLA_MAX + 1];
-    int ret;
 
-    ret = sitnl_parse_rtattr(tb, IFLA_MAX, IFLA_RTA(ifi), IFLA_PAYLOAD(n));
-    if (ret < 0)
-    {
-        return ret;
-    }
+    sitnl_parse_rtattr(tb, IFLA_MAX, IFLA_RTA(ifi), IFLA_PAYLOAD(n));
 
     if (tb[IFLA_LINKINFO])
     {
         struct rtattr *tb_link[IFLA_INFO_MAX + 1];
 
-        ret = sitnl_parse_rtattr_nested(tb_link, IFLA_INFO_MAX, tb[IFLA_LINKINFO]);
-        if (ret < 0)
-        {
-            return ret;
-        }
+        sitnl_parse_rtattr_nested(tb_link, IFLA_INFO_MAX, tb[IFLA_LINKINFO]);
 
         if (!tb_link[IFLA_INFO_KIND])
         {

@@ -450,6 +450,12 @@ tls_ctx_set_tls_groups(struct tls_root_ctx *ctx, const char *groups)
         }
     }
 
+    /* Check if any groups were valid. */
+    if (i == 0)
+    {
+        msg(M_FATAL, "Error: All groups in \"%s\" are invalid or unsupported.", groups);
+    }
+
     /* Recent mbedtls versions state that the list of groups must be terminated
      * with 0. Older versions state that it must be terminated with MBEDTLS_ECP_DP_NONE
      * which is also 0, so this works either way. */
@@ -624,11 +630,6 @@ tls_ctx_load_priv_file(struct tls_root_ctx *ctx, const char *priv_key_file, bool
     return 0;
 }
 
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wconversion"
-#endif
-
 #if MBEDTLS_VERSION_NUMBER < 0x04000000
 /**
  * external_pkcs1_sign implements a mbed TLS rsa_sign_func callback, that uses
@@ -655,7 +656,6 @@ external_pkcs1_sign(void *ctx_voidptr, int (*f_rng)(void *, unsigned char *, siz
 {
     struct external_context *const ctx = ctx_voidptr;
     int rv;
-    uint8_t *to_sign = NULL;
     size_t asn_len = 0, oid_size = 0;
     const char *oid = NULL;
 
@@ -687,11 +687,13 @@ external_pkcs1_sign(void *ctx_voidptr, int (*f_rng)(void *, unsigned char *, siz
         asn_len = 10 + oid_size;
     }
 
-    if ((SIZE_MAX - hashlen) < asn_len || ctx->signature_length < (asn_len + hashlen))
+    if (ctx->signature_length < (asn_len + hashlen)
+        || (asn_len + hashlen) > UINT8_MAX)
     {
         return MBEDTLS_ERR_RSA_BAD_INPUT_DATA;
     }
 
+    uint8_t *to_sign = NULL;
     ALLOC_ARRAY_CLEAR(to_sign, uint8_t, asn_len + hashlen);
     uint8_t *p = to_sign;
     if (md_alg != MBEDTLS_MD_NONE)
@@ -706,20 +708,20 @@ external_pkcs1_sign(void *ctx_voidptr, int (*f_rng)(void *, unsigned char *, siz
          * Digest ::= OCTET STRING
          */
         *p++ = MBEDTLS_ASN1_SEQUENCE | MBEDTLS_ASN1_CONSTRUCTED;
-        *p++ = (unsigned char)(0x08 + oid_size + hashlen);
+        *p++ = (uint8_t)(0x08 + oid_size + hashlen);
         *p++ = MBEDTLS_ASN1_SEQUENCE | MBEDTLS_ASN1_CONSTRUCTED;
-        *p++ = (unsigned char)(0x04 + oid_size);
+        *p++ = (uint8_t)(0x04 + oid_size);
         *p++ = MBEDTLS_ASN1_OID;
-        *p++ = oid_size & 0xFF;
+        *p++ = (uint8_t)oid_size;
         memcpy(p, oid, oid_size);
         p += oid_size;
         *p++ = MBEDTLS_ASN1_NULL;
         *p++ = 0x00;
         *p++ = MBEDTLS_ASN1_OCTET_STRING;
-        *p++ = hashlen;
+        *p++ = (uint8_t)hashlen;
 
         /* Double-check ASN length */
-        ASSERT(asn_len == p - to_sign);
+        ASSERT(asn_len == (uintptr_t)(p - to_sign));
     }
 
     /* Copy the hash to be signed */
@@ -809,7 +811,7 @@ management_sign_func(void *sign_ctx, const void *src, size_t src_len, void *dst,
         goto cleanup;
     }
 
-    if (openvpn_base64_decode(dst_b64, dst, (int)dst_len) != dst_len)
+    if (openvpn_base64_decode(dst_b64, dst, (int)dst_len) != (int)dst_len)
     {
         goto cleanup;
     }
@@ -922,6 +924,8 @@ endless_buf_read(endless_buffer *in, unsigned char *out, size_t out_len)
 {
     size_t read_len = 0;
 
+    ASSERT(out_len <= INT_MAX);
+
     if (in->first_block == NULL)
     {
         return MBEDTLS_ERR_SSL_WANT_READ;
@@ -929,7 +933,7 @@ endless_buf_read(endless_buffer *in, unsigned char *out, size_t out_len)
 
     while (in->first_block != NULL && read_len < out_len)
     {
-        int block_len = in->first_block->length - in->data_start;
+        size_t block_len = in->first_block->length - in->data_start;
         if (block_len <= out_len - read_len)
         {
             buffer_entry *cur_entry = in->first_block;
@@ -955,7 +959,7 @@ endless_buf_read(endless_buffer *in, unsigned char *out, size_t out_len)
         }
     }
 
-    return read_len;
+    return (int)read_len;
 }
 
 static int
@@ -974,6 +978,8 @@ endless_buf_write(endless_buffer *out, const unsigned char *in, size_t len)
         return MBEDTLS_ERR_NET_SEND_FAILED;
     }
 
+    ASSERT(len <= INT_MAX);
+
     new_block->length = len;
     new_block->next_block = NULL;
 
@@ -991,7 +997,7 @@ endless_buf_write(endless_buffer *out, const unsigned char *in, size_t len)
 
     out->last_block = new_block;
 
-    return len;
+    return (int)len;
 }
 
 static int
@@ -1011,7 +1017,7 @@ ssl_bio_write(void *ctx, const unsigned char *in, size_t in_len)
 static void
 my_debug(void *ctx, int level, const char *file, int line, const char *str)
 {
-    int my_loglevel = (level < 3) ? D_TLS_DEBUG_MED : D_TLS_DEBUG;
+    msglvl_t my_loglevel = (level < 3) ? D_TLS_DEBUG_MED : D_TLS_DEBUG;
     msg(my_loglevel, "mbed TLS msg (%s:%d): %s", file, line, str);
 }
 
@@ -1029,8 +1035,9 @@ tls_ctx_personalise_random(struct tls_root_ctx *ctx)
     if (NULL != ctx->crt_chain)
     {
         mbedtls_x509_crt *cert = ctx->crt_chain;
+        const mbedtls_md_info_t *kt = md_get("SHA256");
 
-        if (!md_full("SHA256", cert->tbs.p, cert->tbs.len, sha256_hash))
+        if (0 != mbedtls_md(kt, cert->tbs.p, cert->tbs.len, sha256_hash))
         {
             msg(M_WARN, "WARNING: failed to personalise random");
         }
@@ -1046,10 +1053,6 @@ tls_ctx_personalise_random(struct tls_root_ctx *ctx)
     }
 #endif /* MBEDTLS_VERSION_NUMBER < 0x040000 */
 }
-
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 
 int
 tls_version_max(void)
@@ -1575,7 +1578,7 @@ get_ssl_library_version(void)
 {
     static char mbedtls_version[30];
     unsigned int pv = mbedtls_version_get_number();
-    snprintf(mbedtls_version, sizeof(mbedtls_version), "mbed TLS %d.%d.%d", (pv >> 24) & 0xff,
+    snprintf(mbedtls_version, sizeof(mbedtls_version), "mbed TLS %u.%u.%u", (pv >> 24) & 0xff,
              (pv >> 16) & 0xff, (pv >> 8) & 0xff);
     return mbedtls_version;
 }

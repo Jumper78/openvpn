@@ -159,7 +159,7 @@ tls_crypt_wrap(const struct buffer *src, struct buffer *dst, struct crypto_optio
     dmsg(D_PACKET_CONTENT, "TLS-CRYPT WRAP AD: %s", format_hex(BPTR(dst), BLEN(dst), 0, &gc));
 
     /* Buffer overflow check */
-    if (!buf_safe(dst, BLEN(src) + TLS_CRYPT_BLOCK_SIZE + TLS_CRYPT_TAG_SIZE))
+    if (!buf_safe(dst, BLENZ(src) + TLS_CRYPT_BLOCK_SIZE + TLS_CRYPT_TAG_SIZE))
     {
         msg(D_CRYPT_ERRORS,
             "TLS-CRYPT WRAP: buffer size error, "
@@ -216,13 +216,12 @@ tls_crypt_unwrap(const struct buffer *src, struct buffer *dst, struct crypto_opt
     gc_init(&gc);
 
     ASSERT(opt);
-    ASSERT(src->len > 0);
     ASSERT(ctx->cipher);
     ASSERT(packet_id_initialized(&opt->packet_id) || (opt->flags & CO_IGNORE_PACKET_ID));
 
     dmsg(D_PACKET_CONTENT, "TLS-CRYPT UNWRAP FROM: %s", format_hex(BPTR(src), BLEN(src), 80, &gc));
 
-    if (buf_len(src) < TLS_CRYPT_OFF_CT)
+    if (BLENZ(src) < TLS_CRYPT_OFF_CT)
     {
         CRYPT_ERROR("packet too short");
     }
@@ -232,7 +231,7 @@ tls_crypt_unwrap(const struct buffer *src, struct buffer *dst, struct crypto_opt
         int outlen = 0;
 
         /* Buffer overflow check (should never fail) */
-        if (!buf_safe(dst, BLEN(src) - TLS_CRYPT_OFF_CT + TLS_CRYPT_BLOCK_SIZE))
+        if (!buf_safe(dst, BLENZ(src) - TLS_CRYPT_OFF_CT + TLS_CRYPT_BLOCK_SIZE))
         {
             CRYPT_ERROR("potential buffer overflow");
         }
@@ -441,7 +440,7 @@ tls_crypt_v2_unwrap_client_key(struct key2 *client_key, struct buffer *metadata,
     uint16_t net_len = 0;
     const uint8_t *tag = BPTR(&wrapped_client_key);
 
-    if (BLEN(&wrapped_client_key) < sizeof(net_len))
+    if (BLENZ(&wrapped_client_key) < sizeof(net_len))
     {
         CRYPT_ERROR("failed to read length");
     }
@@ -496,7 +495,7 @@ tls_crypt_v2_unwrap_client_key(struct key2 *client_key, struct buffer *metadata,
                              "a different tls-crypt-v2 server key)");
     }
 
-    if (buf_len(&plaintext) < sizeof(client_key->keys))
+    if (BLENZ(&plaintext) < sizeof(client_key->keys))
     {
         CRYPT_ERROR("failed to read client key");
     }
@@ -523,7 +522,7 @@ error_exit:
 static bool
 tls_crypt_v2_check_client_key_age(const struct tls_wrap_ctx *ctx, int max_days)
 {
-    if (ctx->tls_crypt_v2_metadata.len < 1 + sizeof(int64_t))
+    if (BLENZ(&ctx->tls_crypt_v2_metadata) < 1 + sizeof(int64_t))
     {
         msg(M_WARN, "ERROR: Client key metadata is too small to contain a timestamp.");
         return false;
@@ -619,7 +618,8 @@ tls_crypt_v2_extract_client_key(struct buffer *buf, struct tls_wrap_ctx *ctx,
     struct buffer wrapped_client_key = *buf;
     uint16_t net_len = 0;
 
-    if (BLEN(&wrapped_client_key) < sizeof(net_len))
+    if (!buf_advance(&wrapped_client_key, 1)
+        || BLENZ(&wrapped_client_key) < 1 + sizeof(net_len))
     {
         msg(D_TLS_ERRORS, "Can not read tls-crypt-v2 client key length");
         return false;
@@ -723,7 +723,7 @@ tls_crypt_v2_write_client_key_file(const char *filename, const char *b64_metadat
             msg(M_FATAL, "ERROR: failed to base64 decode provided metadata");
             goto cleanup;
         }
-        if (decoded_len > TLS_CRYPT_V2_MAX_METADATA_LEN - 1)
+        if ((unsigned int)decoded_len > TLS_CRYPT_V2_MAX_METADATA_LEN - 1)
         {
             msg(M_FATAL, "ERROR: metadata too long (%d bytes, max %u bytes)", decoded_len,
                 TLS_CRYPT_V2_MAX_METADATA_LEN - 1);

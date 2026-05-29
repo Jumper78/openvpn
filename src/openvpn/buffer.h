@@ -124,6 +124,7 @@ struct gc_arena
 #define BEND(buf)  (buf_bend(buf))
 #define BLAST(buf) (buf_blast(buf))
 #define BLEN(buf)  (buf_len(buf))
+#define BLENZ(buf) ((size_t)buf_len(buf))
 #define BDEF(buf)  (buf_defined(buf))
 #define BSTR(buf)  (buf_str(buf))
 #define BCAP(buf)  (buf_forward_capacity(buf))
@@ -703,7 +704,7 @@ buf_write_u32(struct buffer *dest, uint32_t data)
 static inline bool
 buf_copy(struct buffer *dest, const struct buffer *src)
 {
-    return buf_write(dest, BPTR(src), BLEN(src));
+    return buf_write(dest, BPTR(src), BLENZ(src));
 }
 
 static inline bool
@@ -830,7 +831,7 @@ buf_read_u32(struct buffer *buf, bool *good)
 static inline bool
 buf_equal(const struct buffer *a, const struct buffer *b)
 {
-    return BLEN(a) == BLEN(b) && 0 == memcmp(BPTR(a), BPTR(b), BLEN(a));
+    return BLEN(a) == BLEN(b) && 0 == memcmp(BPTR(a), BPTR(b), BLENZ(a));
 }
 
 /**
@@ -971,6 +972,29 @@ strprefix(const char *str, const char *prefix)
     return 0 == strncmp(str, prefix, strlen(prefix));
 }
 
+/**
+ * Like snprintf() but returns an boolean.
+ *
+ * To check the return value of snprintf() one needs to
+ * do multiple comparisons of the \p size parameter
+ * against the return value. Doesn't get prettier by
+ * them being different types with different signedness
+ * and size.
+ *
+ * So this function allows to wrap all of that into one
+ * boolean return value.
+ *
+ * @return true if snprintf() was successful and not truncated.
+ */
+bool checked_snprintf(char *str, size_t size, const char *format, ...)
+#ifdef __GNUC__
+#if __USE_MINGW_ANSI_STDIO
+    __attribute__((format(gnu_printf, 3, 4)))
+#else
+    __attribute__((format(__printf__, 3, 4)))
+#endif
+#endif
+    ;
 
 /*
  * Verify that a pointer is correctly aligned
@@ -1125,8 +1149,8 @@ struct buffer_list
 {
     struct buffer_entry *head; /* next item to pop/peek */
     struct buffer_entry *tail; /* last item pushed */
-    int size;                  /* current number of entries */
-    int max_size;              /* maximum size list should grow to */
+    size_t size;               /* current number of entries */
+    size_t max_size;           /* maximum size list should grow to */
 };
 
 /**

@@ -158,8 +158,7 @@ static const char usage_message[] =
     "                  through an HTTP proxy at address s and port p.\n"
     "                  If proxy authentication is required,\n"
     "                  up is a file containing username/password on 2 lines, or\n"
-    "                  'stdin' to prompt from console.  Add auth='ntlm2' if\n"
-    "                  the proxy requires NTLM authentication.\n"
+    "                  'stdin' to prompt from console.\n"
     "--http-proxy s p 'auto[-nct]' : Like the above directive, but automatically\n"
     "                  determine auth method and query for username/password\n"
     "                  if needed.  auto-nct disables weak proxy auth methods.\n"
@@ -511,7 +510,8 @@ static const char usage_message[] =
     "                  up is a file containing the username on the first line,\n"
     "                  and a password on the second. If either the password or both\n"
     "                  the username and the password are omitted OpenVPN will prompt\n"
-    "                  for them from console.\n"
+    "                  for them from console. If [up] is 'username-only', only username\n"
+    "                  will be prompted for from console or management interface.\n"
     "--pull           : Accept certain config file options from the peer as if they\n"
     "                  were part of the local config file.  Must be specified\n"
     "                  when connecting to a '--mode server' remote host.\n"
@@ -566,10 +566,6 @@ static const char usage_message[] =
     "                  using file.\n"
     "--test-crypto   : Run a self-test of crypto features enabled.\n"
     "                  For debugging only.\n"
-#ifdef ENABLE_PREDICTION_RESISTANCE
-    "--use-prediction-resistance: Enable prediction resistance on the random\n"
-    "                             number generator.\n"
-#endif
     "\n"
     "TLS Key Negotiation Options:\n"
     "(These options are meaningful only for TLS-mode)\n"
@@ -797,15 +793,12 @@ static const char usage_message[] =
  * will be set to 0.
  */
 void
-init_options(struct options *o, const bool init_gc)
+init_options(struct options *o)
 {
     CLEAR(*o);
-    if (init_gc)
-    {
-        gc_init(&o->gc);
-        gc_init(&o->dns_options.gc);
-        o->gc_owned = true;
-    }
+    gc_init(&o->gc);
+    gc_init(&o->dns_options.gc);
+
     o->mode = MODE_POINT_TO_POINT;
     o->topology = TOP_UNDEF;
     o->ce.proto = PROTO_UDP;
@@ -857,8 +850,6 @@ init_options(struct options *o, const bool init_gc)
 #endif
     o->vlan_accept = VLAN_ALL;
     o->vlan_pvid = 1;
-    o->real_hash_size = 256;
-    o->virtual_hash_size = 256;
     o->n_bcast_buf = 256;
     o->tcp_queue_limit = 64;
     o->max_clients = 1024;
@@ -872,9 +863,6 @@ init_options(struct options *o, const bool init_gc)
     o->replay_window = DEFAULT_SEQ_BACKTRACK;
     o->replay_time = DEFAULT_TIME_BACKTRACK;
     o->key_direction = KEY_DIRECTION_BIDIRECTIONAL;
-#ifdef ENABLE_PREDICTION_RESISTANCE
-    o->use_prediction_resistance = false;
-#endif
     o->tls_timeout = 2;
     o->renegotiate_bytes = -1;
     o->renegotiate_seconds = 3600;
@@ -933,11 +921,9 @@ uninit_options(struct options *o)
     {
         CLEAR(*o->remote_list);
     }
-    if (o->gc_owned)
-    {
-        gc_free(&o->gc);
-        gc_free(&o->dns_options.gc);
-    }
+
+    gc_free(&o->gc);
+    gc_free(&o->dns_options.gc);
 }
 
 #ifndef ENABLE_SMALL
@@ -1271,23 +1257,21 @@ parse_hash_fingerprint_multiline(const char *str, int nbytes, msglvl_t msglevel,
 #ifndef ENABLE_SMALL
 
 static void
-show_dhcp_option_list(const char *name, const char *const *array, int len)
+show_dhcp_option_list(const char *name, const char *const *array, unsigned int len)
 {
-    int i;
-    for (i = 0; i < len; ++i)
+    for (unsigned int i = 0; i < len; ++i)
     {
-        msg(D_SHOW_PARMS, "  %s[%d] = %s", name, i, array[i]);
+        msg(D_SHOW_PARMS, "  %s[%u] = %s", name, i, array[i]);
     }
 }
 
 static void
-show_dhcp_option_addrs(const char *name, const in_addr_t *array, int len)
+show_dhcp_option_addrs(const char *name, const in_addr_t *array, unsigned int len)
 {
     struct gc_arena gc = gc_new();
-    int i;
-    for (i = 0; i < len; ++i)
+    for (unsigned int i = 0; i < len; ++i)
     {
-        msg(D_SHOW_PARMS, "  %s[%d] = %s", name, i, print_in_addr_t(array[i], 0, &gc));
+        msg(D_SHOW_PARMS, "  %s[%u] = %s", name, i, print_in_addr_t(array[i], 0, &gc));
     }
     gc_free(&gc);
 }
@@ -1319,12 +1303,12 @@ show_tuntap_options(const struct tuntap_options *o)
 #endif /* ifdef _WIN32 */
 
 static void
-dhcp_option_dns6_parse(const char *parm, struct in6_addr *dns6_list, int *len, msglvl_t msglevel)
+dhcp_option_dns6_parse(const char *parm, struct in6_addr *dns6_list, unsigned int *len, msglvl_t msglevel)
 {
     struct in6_addr addr;
     if (*len >= N_DHCP_ADDR)
     {
-        msg(msglevel, "--dhcp-option DNS: maximum of %d IPv6 dns servers can be specified",
+        msg(msglevel, "--dhcp-option DNS: maximum of %u IPv6 dns servers can be specified",
             N_DHCP_ADDR);
     }
     else if (get_ipv6_addr(parm, &addr, NULL, msglevel))
@@ -1333,12 +1317,12 @@ dhcp_option_dns6_parse(const char *parm, struct in6_addr *dns6_list, int *len, m
     }
 }
 static void
-dhcp_option_address_parse(const char *name, const char *parm, in_addr_t *array, int *len,
+dhcp_option_address_parse(const char *name, const char *parm, in_addr_t *array, unsigned int *len,
                           msglvl_t msglevel)
 {
     if (*len >= N_DHCP_ADDR)
     {
-        msg(msglevel, "--dhcp-option %s: maximum of %d %s servers can be specified", name,
+        msg(msglevel, "--dhcp-option %s: maximum of %u %s servers can be specified", name,
             N_DHCP_ADDR, name);
     }
     else
@@ -1446,7 +1430,7 @@ show_p2mp_parms(const struct options *o)
     SHOW_INT(cf_per);
     SHOW_INT(cf_initial_max);
     SHOW_INT(cf_initial_per);
-    SHOW_INT(max_clients);
+    SHOW_UINT(max_clients);
     SHOW_INT(max_routes_per_client);
     SHOW_STR(auth_user_pass_verify_script);
     SHOW_BOOL(auth_user_pass_verify_script_via_file);
@@ -1843,9 +1827,6 @@ show_settings(const struct options *o)
     SHOW_INT(replay_time);
     SHOW_STR(packet_id_file);
     SHOW_BOOL(test_crypto);
-#ifdef ENABLE_PREDICTION_RESISTANCE
-    SHOW_BOOL(use_prediction_resistance);
-#endif
 
     SHOW_BOOL(tls_server);
     SHOW_BOOL(tls_client);
@@ -2269,7 +2250,7 @@ options_postprocess_verify_ce(const struct options *options, const struct connec
     int dev = DEV_TYPE_UNDEF;
     bool pull = false;
 
-    init_options(&defaults, true);
+    init_options(&defaults);
 
     if (!options->test_crypto)
     {
@@ -3549,7 +3530,7 @@ tuntap_options_postprocess_dns(struct options *o)
     while (s)
     {
         bool non_standard_server_port = false;
-        for (int i = 0; i < s->addr_count; ++i)
+        for (size_t i = 0; i < s->addr_count; ++i)
         {
             if (s->addr[i].port && s->addr[i].port != 53)
             {
@@ -3566,7 +3547,7 @@ tuntap_options_postprocess_dns(struct options *o)
         else
         {
             bool overflow = false;
-            for (int i = 0; i < s->addr_count; ++i)
+            for (size_t i = 0; i < s->addr_count; ++i)
             {
                 if (s->addr[i].family == AF_INET && tt->dns_len + 1 < N_DHCP_ADDR)
                 {
@@ -3666,7 +3647,7 @@ dhcp_options_postprocess_dns(struct options *o, struct env_set *es)
             new->name = dhcp->domain;
             entry = &new->next;
 
-            for (size_t i = 0; i < dhcp->domain_search_list_len; ++i)
+            for (unsigned int i = 0; i < dhcp->domain_search_list_len; ++i)
             {
                 ALLOC_OBJ_CLEAR_GC(*entry, struct dns_domain, &dns->gc);
                 struct dns_domain *new = *entry;
@@ -3676,13 +3657,13 @@ dhcp_options_postprocess_dns(struct options *o, struct env_set *es)
 
             struct dns_server *server = dns_server_get(&dns->servers, 0, &dns->gc);
             const size_t max_addrs = SIZE(server->addr);
-            for (size_t i = 0; i < dhcp->dns_len && server->addr_count < max_addrs; ++i)
+            for (unsigned int i = 0; i < dhcp->dns_len && server->addr_count < max_addrs; ++i)
             {
                 server->addr[server->addr_count].in.a4.s_addr = htonl(dhcp->dns[i]);
                 server->addr[server->addr_count].family = AF_INET;
                 server->addr_count += 1;
             }
-            for (size_t i = 0; i < dhcp->dns6_len && server->addr_count < max_addrs; ++i)
+            for (unsigned int i = 0; i < dhcp->dns6_len && server->addr_count < max_addrs; ++i)
             {
                 server->addr[server->addr_count].in.a6 = dhcp->dns6[i];
                 server->addr[server->addr_count].family = AF_INET6;
@@ -3704,7 +3685,7 @@ dhcp_options_postprocess_dns(struct options *o, struct env_set *es)
         while (s)
         {
             bool non_standard_server_port = false;
-            for (int i = 0; i < s->addr_count; ++i)
+            for (size_t i = 0; i < s->addr_count; ++i)
             {
                 if (s->addr[i].port && s->addr[i].port != 53)
                 {
@@ -3720,7 +3701,7 @@ dhcp_options_postprocess_dns(struct options *o, struct env_set *es)
             }
             else
             {
-                for (int i = 0; i < s->addr_count; ++i)
+                for (size_t i = 0; i < s->addr_count; ++i)
                 {
                     const char *option;
                     const char *value;
@@ -3744,6 +3725,22 @@ dhcp_options_postprocess_dns(struct options *o, struct env_set *es)
     gc_free(&gc);
 }
 #endif /* if defined(_WIN32) || defined(TARGET_ANDROID) */
+/**
+ * Sets the internal hash maps sizes according to the max_clients
+ *
+ */
+static void
+helper_hashmap_sizes(struct options *o)
+{
+    if (!o->real_hash_size)
+    {
+        o->real_hash_size = 4 * o->max_clients;
+    }
+    if (!o->virtual_hash_size)
+    {
+        o->virtual_hash_size = 4 * o->max_clients;
+    }
+}
 
 static void
 options_postprocess_mutate(struct options *o, struct env_set *es)
@@ -3758,6 +3755,11 @@ options_postprocess_mutate(struct options *o, struct env_set *es)
     helper_setdefault_topology(o);
     helper_keepalive(o);
     helper_tcp_nodelay(o);
+
+    if (o->mode == MODE_SERVER)
+    {
+        helper_hashmap_sizes(o);
+    }
 
     options_postprocess_setdefault_ncpciphers(o);
     options_set_backwards_compatible_options(o);
@@ -3927,6 +3929,12 @@ options_postprocess_mutate(struct options *o, struct env_set *es)
     {
         o->auth_token_renewal = o->renegotiate_seconds;
     }
+#if ENABLE_MANAGEMENT
+    if (o->auth_user_pass_username_only && o->sc_info.challenge_text)
+    {
+        msg(M_USAGE, "'auth-user-pass username-only' cannot be used with static challenge");
+    }
+#endif
     pre_connect_save(o);
 }
 
@@ -4450,7 +4458,7 @@ options_string(const struct options *o, const struct frame *frame, struct tuntap
         /* Skip resolving BF-CBC to allow SSL libraries without BF-CBC
          * to work here in the default configuration */
         const char *ciphername = o->ciphername;
-        int keysize = 0;
+        size_t keysize = 0;
 
         if (strcmp(o->ciphername, "BF-CBC") == 0)
         {
@@ -4473,18 +4481,11 @@ options_string(const struct options *o, const struct frame *frame, struct tuntap
             buf_printf(&out, ",cipher %s", ciphername);
         }
         buf_printf(&out, ",auth %s", md_kt_name(kt.digest));
-        buf_printf(&out, ",keysize %d", keysize);
+        buf_printf(&out, ",keysize %zu", keysize);
         if (o->shared_secret_file)
         {
             buf_printf(&out, ",secret");
         }
-
-#ifdef ENABLE_PREDICTION_RESISTANCE
-        if (o->use_prediction_resistance)
-        {
-            buf_printf(&out, ",use-prediction-resistance");
-        }
-#endif
     }
 
     /*
@@ -4698,6 +4699,11 @@ options_string_version(const char *s, struct gc_arena *gc)
     return BSTR(&out);
 }
 
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-compare"
+#endif
+
 char *
 options_string_extract_option(const char *options_string, const char *opt_name, struct gc_arena *gc)
 {
@@ -4726,6 +4732,10 @@ options_string_extract_option(const char *options_string, const char *opt_name, 
     }
     return ret;
 }
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 /*
  * parse/print topology coding
@@ -4844,7 +4854,7 @@ usage(void)
 #else
 
     struct options o;
-    init_options(&o, true);
+    init_options(&o);
 
     fprintf(fp, usage_message, title_string, o.ce.connect_retry_seconds,
             o.ce.connect_retry_seconds_max, o.ce.local_port, o.ce.remote_port, TUN_MTU_DEFAULT,
@@ -4971,8 +4981,8 @@ atou(const char *str)
     }
 
 static bool
-verify_permission(const char *name, const char *file, int line, const unsigned int type,
-                  const unsigned int allowed, unsigned int *found, const msglvl_t msglevel,
+verify_permission(const char *name, const char *file, int line, const uint64_t type,
+                  const uint64_t allowed, uint64_t *found, const msglvl_t msglevel,
                   struct options *options, bool is_inline)
 {
     if (!(type & allowed))
@@ -5064,7 +5074,7 @@ msglevel_forward_compatible(struct options *options, const msglvl_t msglevel)
 void
 remove_option(struct context *c, struct options *options, char *p[], bool is_inline,
               const char *file, int line, const msglvl_t msglevel,
-              const unsigned int permission_mask, unsigned int *option_types_found,
+              const uint64_t permission_mask, uint64_t *option_types_found,
               struct env_set *es)
 {
     msglvl_t msglevel_fc = msglevel_forward_compatible(options, msglevel);
@@ -5296,7 +5306,7 @@ check_dns_option(struct options *options, char *p[], const msglvl_t msglevel, bo
         struct dns_server *server =
             dns_server_get(&options->dns_options.servers, priority, &options->dns_options.gc);
 
-        if (streq(p[3], "address") && p[4])
+        if (streq(p[3], "address"))
         {
             for (int i = 4; p[i]; ++i)
             {
@@ -5384,7 +5394,7 @@ check_dns_option(struct options *options, char *p[], const msglvl_t msglevel, bo
 void
 update_option(struct context *c, struct options *options, char *p[], bool is_inline,
               const char *file, int line, const int level, const msglvl_t msglevel,
-              const unsigned int permission_mask, unsigned int *option_types_found,
+              const uint64_t permission_mask, uint64_t *option_types_found,
               struct env_set *es)
 {
     const bool pull_mode = BOOL_CAST(permission_mask & OPT_P_PULL_MODE);
@@ -5566,10 +5576,15 @@ key_is_external(const struct options *options)
     return ret;
 }
 
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-compare"
+#endif
+
 void
 add_option(struct options *options, char *p[], bool is_inline, const char *file, int line,
-           const int level, const msglvl_t msglevel, const unsigned int permission_mask,
-           unsigned int *option_types_found, struct env_set *es)
+           const int level, const msglvl_t msglevel, const uint64_t permission_mask,
+           uint64_t *option_types_found, struct env_set *es)
 {
     struct gc_arena gc = gc_new();
     const bool pull_mode = BOOL_CAST(permission_mask & OPT_P_PULL_MODE);
@@ -5999,7 +6014,7 @@ add_option(struct options *options, char *p[], bool is_inline, const char *file,
             struct options sub;
             struct connection_entry *e;
 
-            init_options(&sub, true);
+            init_options(&sub);
             sub.ce = options->ce;
             read_config_string("[CONNECTION-OPTIONS]", &sub, p[1], msglevel, OPT_P_CONNECTION,
                                option_types_found, es);
@@ -7031,12 +7046,12 @@ add_option(struct options *options, char *p[], bool is_inline, const char *file,
         if (options->routes->flags & RG_REROUTE_GW)
         {
             setenv_int(es, "route_redirect_gateway_ipv4",
-                       options->routes->flags & RG_BLOCK_LOCAL ? 2 : 1);
+                       (options->routes->flags & RG_BLOCK_LOCAL) ? 2 : 1);
         }
         if (options->routes_ipv6 && (options->routes_ipv6->flags & RG_REROUTE_GW))
         {
             setenv_int(es, "route_redirect_gateway_ipv6",
-                       options->routes->flags & RG_BLOCK_LOCAL ? 2 : 1);
+                       (options->routes->flags & RG_BLOCK_LOCAL) ? 2 : 1);
         }
 #ifdef _WIN32
         /* we need this here to handle pushed --redirect-gateway */
@@ -7386,7 +7401,7 @@ add_option(struct options *options, char *p[], bool is_inline, const char *file,
     else if (streq(p[0], "max-clients") && p[1] && !p[2])
     {
         VERIFY_PERMISSION(OPT_P_GENERAL);
-        if (!atoi_constrained(p[1], &options->max_clients, p[0], 1, MAX_PEER_ID, msglevel))
+        if (!atoi_constrained(p[1], (int *)&options->max_clients, p[0], 1, MAX_PEER_ID - 1, msglevel))
         {
             goto err;
         }
@@ -7751,7 +7766,13 @@ add_option(struct options *options, char *p[], bool is_inline, const char *file,
     else if (streq(p[0], "auth-user-pass") && !p[2])
     {
         VERIFY_PERMISSION(OPT_P_GENERAL | OPT_P_INLINE);
-        if (p[1])
+        options->auth_user_pass_username_only = false;
+        if (p[1] && streq(p[1], "username-only"))
+        {
+            options->auth_user_pass_username_only = true;
+            options->auth_user_pass_file = "stdin";
+        }
+        else if (p[1])
         {
             options->auth_user_pass_file = p[1];
             options->auth_user_pass_file_inline = is_inline;
@@ -8566,13 +8587,6 @@ add_option(struct options *options, char *p[], bool is_inline, const char *file,
             options->providers.names[j] = p[j];
         }
     }
-#ifdef ENABLE_PREDICTION_RESISTANCE
-    else if (streq(p[0], "use-prediction-resistance") && !p[1])
-    {
-        VERIFY_PERMISSION(OPT_P_GENERAL);
-        options->use_prediction_resistance = true;
-    }
-#endif
     else if (streq(p[0], "show-tls") && !p[1])
     {
         VERIFY_PERMISSION(OPT_P_GENERAL);
@@ -9310,6 +9324,10 @@ add_option(struct options *options, char *p[], bool is_inline, const char *file,
 err:
     gc_free(&gc);
 }
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 bool
 has_udp_in_local_list(const struct options *options)

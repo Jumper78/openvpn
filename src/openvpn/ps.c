@@ -209,7 +209,7 @@ port_share_sendmsg(const socket_descriptor_t sd, const char command, const struc
         if (head)
         {
             iov[1].iov_base = BPTR(head);
-            iov[1].iov_len = BLEN(head);
+            iov[1].iov_len = BLENZ(head);
             mesg.msg_iovlen = 2;
         }
 
@@ -352,7 +352,8 @@ journal_add(const char *journal_dir, struct proxy_connection *pc, struct proxy_c
         int fd = platform_open(jfn, O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR | S_IRGRP);
         if (fd != -1)
         {
-            if (write(fd, f, strlen(f)) != strlen(f))
+            ssize_t write_len = strlen(f);
+            if (write(fd, f, write_len) != write_len)
             {
                 msg(M_WARN, "PORT SHARE: writing to journal file (%s) failed", jfn);
             }
@@ -582,7 +583,7 @@ static int
 proxy_connection_io_send(struct proxy_connection *pc, int *bytes_sent)
 {
     const socket_descriptor_t sd = pc->counterpart->sd;
-    const ssize_t status = send(sd, BPTR(&pc->buf), BLEN(&pc->buf), MSG_NOSIGNAL);
+    const ssize_t status = send(sd, BPTR(&pc->buf), BLENZ(&pc->buf), MSG_NOSIGNAL);
 
     if (status < 0)
     {

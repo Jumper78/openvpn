@@ -130,7 +130,7 @@ mbed_log_func_line(unsigned int flags, int errval, const char *func, int line)
 {
     char prefix[256];
 
-    if (snprintf(prefix, sizeof(prefix), "%s:%d", func, line) >= sizeof(prefix))
+    if (!checked_snprintf(prefix, sizeof(prefix), "%s:%d", func, line))
     {
         return mbed_log_err(flags, errval, func);
     }
@@ -246,11 +246,11 @@ crypto_pem_encode(const char *name, struct buffer *dst, const struct buffer *src
     char header[1000 + 1] = { 0 };
     char footer[1000 + 1] = { 0 };
 
-    if (snprintf(header, sizeof(header), "-----BEGIN %s-----\n", name) >= sizeof(header))
+    if (!checked_snprintf(header, sizeof(header), "-----BEGIN %s-----\n", name))
     {
         return false;
     }
-    if (snprintf(footer, sizeof(footer), "-----END %s-----\n", name) >= sizeof(footer))
+    if (!checked_snprintf(footer, sizeof(footer), "-----END %s-----\n", name))
     {
         return false;
     }
@@ -283,11 +283,11 @@ crypto_pem_decode(const char *name, struct buffer *dst, const struct buffer *src
     char header[1000 + 1] = { 0 };
     char footer[1000 + 1] = { 0 };
 
-    if (snprintf(header, sizeof(header), "-----BEGIN %s-----", name) >= sizeof(header))
+    if (!checked_snprintf(header, sizeof(header), "-----BEGIN %s-----", name))
     {
         return false;
     }
-    if (snprintf(footer, sizeof(footer), "-----END %s-----", name) >= sizeof(footer))
+    if (!checked_snprintf(footer, sizeof(footer), "-----END %s-----", name))
     {
         return false;
     }
@@ -365,16 +365,6 @@ rand_ctx_get(void)
 
     return &cd_ctx;
 }
-
-#ifdef ENABLE_PREDICTION_RESISTANCE
-void
-rand_ctx_enable_prediction_resistance(void)
-{
-    mbedtls_ctr_drbg_context *cd_ctx = rand_ctx_get();
-
-    mbedtls_ctr_drbg_set_prediction_resistance(cd_ctx, 1);
-}
-#endif /* ENABLE_PREDICTION_RESISTANCE */
 
 int
 rand_bytes(uint8_t *output, int len)
@@ -455,7 +445,7 @@ cipher_kt_name(const char *ciphername)
     return translate_cipher_name_to_openvpn(mbedtls_cipher_info_get_name(cipher_kt));
 }
 
-int
+unsigned int
 cipher_kt_key_size(const char *ciphername)
 {
     const mbedtls_cipher_info_t *cipher_kt = cipher_get(ciphername);
@@ -465,10 +455,10 @@ cipher_kt_key_size(const char *ciphername)
         return 0;
     }
 
-    return (int)mbedtls_cipher_info_get_key_bitlen(cipher_kt) / 8;
+    return mbedtls_cipher_info_get_key_bitlen(cipher_kt) / 8;
 }
 
-int
+unsigned int
 cipher_kt_iv_size(const char *ciphername)
 {
     const mbedtls_cipher_info_t *cipher_kt = cipher_get(ciphername);
@@ -477,10 +467,10 @@ cipher_kt_iv_size(const char *ciphername)
     {
         return 0;
     }
-    return (int)mbedtls_cipher_info_get_iv_size(cipher_kt);
+    return mbedtls_cipher_info_get_iv_size(cipher_kt);
 }
 
-int
+unsigned int
 cipher_kt_block_size(const char *ciphername)
 {
     const mbedtls_cipher_info_t *cipher_kt = cipher_get(ciphername);
@@ -488,10 +478,10 @@ cipher_kt_block_size(const char *ciphername)
     {
         return 0;
     }
-    return (int)mbedtls_cipher_info_get_block_size(cipher_kt);
+    return mbedtls_cipher_info_get_block_size(cipher_kt);
 }
 
-int
+unsigned int
 cipher_kt_tag_size(const char *ciphername)
 {
     if (cipher_kt_mode_aead(ciphername))
@@ -604,10 +594,10 @@ cipher_ctx_init(mbedtls_cipher_context_t *ctx, const uint8_t *key, const char *c
     }
 
     /* make sure we used a big enough key */
-    ASSERT(mbedtls_cipher_get_key_bitlen(ctx) <= key_bitlen);
+    ASSERT((size_t)mbedtls_cipher_get_key_bitlen(ctx) <= key_bitlen);
 }
 
-int
+unsigned int
 cipher_ctx_iv_length(const mbedtls_cipher_context_t *ctx)
 {
     return mbedtls_cipher_get_iv_size(ctx);
@@ -616,7 +606,7 @@ cipher_ctx_iv_length(const mbedtls_cipher_context_t *ctx)
 int
 cipher_ctx_get_tag(cipher_ctx_t *ctx, uint8_t *tag, int tag_len)
 {
-    if (tag_len > SIZE_MAX)
+    if (tag_len < 0)
     {
         return 0;
     }
@@ -629,10 +619,10 @@ cipher_ctx_get_tag(cipher_ctx_t *ctx, uint8_t *tag, int tag_len)
     return 1;
 }
 
-int
+unsigned int
 cipher_ctx_block_size(const mbedtls_cipher_context_t *ctx)
 {
-    return (int)mbedtls_cipher_get_block_size(ctx);
+    return mbedtls_cipher_get_block_size(ctx);
 }
 
 int
@@ -688,7 +678,7 @@ cipher_ctx_reset(mbedtls_cipher_context_t *ctx, const uint8_t *iv_buf)
 int
 cipher_ctx_update_ad(cipher_ctx_t *ctx, const uint8_t *src, int src_len)
 {
-    if (src_len > SIZE_MAX)
+    if (src_len < 0)
     {
         return 0;
     }
@@ -779,7 +769,7 @@ cipher_ctx_final_check_tag(mbedtls_cipher_context_t *ctx, uint8_t *dst, int *dst
  */
 
 
-static const mbedtls_md_info_t *
+const mbedtls_md_info_t *
 md_get(const char *digest)
 {
     const mbedtls_md_info_t *md = NULL;
@@ -834,13 +824,6 @@ md_kt_size(const char *mdname)
  * Generic message digest functions
  *
  */
-
-int
-md_full(const char *mdname, const uint8_t *src, int src_len, uint8_t *dst)
-{
-    const mbedtls_md_info_t *kt = md_get(mdname);
-    return 0 == mbedtls_md(kt, src, src_len, dst);
-}
 
 mbedtls_md_context_t *
 md_ctx_new(void)

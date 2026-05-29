@@ -49,9 +49,9 @@ test_buffer_strprefix(void **state)
 #define teststr2  "two"
 #define teststr3  "three"
 
-#define assert_buf_equals_str(buf, str)       \
-    assert_int_equal(BLEN(buf), strlen(str)); \
-    assert_memory_equal(BPTR(buf), str, BLEN(buf));
+#define assert_buf_equals_str(buf, str)        \
+    assert_int_equal(BLENZ(buf), strlen(str)); \
+    assert_memory_equal(BPTR(buf), str, BLENZ(buf));
 
 static void
 test_buffer_printf_catrunc(void **state)
@@ -424,6 +424,16 @@ test_snprintf(void **state)
 #endif
 }
 
+static void
+test_checked_snprintf(void **state)
+{
+    char buf[10];
+    assert_true(checked_snprintf(buf, sizeof(buf), "%s", "Hello"));
+    assert_true(checked_snprintf(buf, sizeof(buf), "%s", "Hello Foo"));
+    assert_false(checked_snprintf(buf, sizeof(buf), "%s", "Hello Foo!"));
+    assert_false(checked_snprintf(buf, sizeof(buf), "%s", "Hello World!"));
+}
+
 void
 test_buffer_chomp(void **state)
 {
@@ -446,6 +456,32 @@ test_buffer_chomp(void **state)
     /* Check that our own method agrees */
     assert_true(string_check_buf(&buf2, CC_PRINT | CC_NULL, CC_CRLF));
     assert_string_equal(BSTR(&buf2), "CR_RESPONSE,MTIx");
+
+    gc_free(&gc);
+}
+
+void
+test_buffer_null_terminate(void **state)
+{
+    struct gc_arena gc = gc_new();
+
+    struct buffer buf = alloc_buf_gc(5, &gc);
+    const char test1[] = "1234";
+    const char test2[] = "12345";
+    assert_true(buf_write(&buf, test1, sizeof(test1)));
+    assert_string_equal(BSTR(&buf), "1234");
+    buf_null_terminate(&buf);
+    assert_string_equal(BSTR(&buf), "1234");
+
+    assert_true(buf_inc_len(&buf, -1));
+    assert_true(buf_write_u8(&buf, '5'));
+    assert_memory_equal(BPTR(&buf), test2, strlen(test2));
+    buf_null_terminate(&buf);
+    assert_string_equal(BSTR(&buf), "1234");
+
+    struct buffer buf2;
+    CLEAR(buf2);
+    buf_null_terminate(&buf2);
 
     gc_free(&gc);
 }
@@ -528,7 +564,9 @@ main(void)
         cmocka_unit_test(test_character_class),
         cmocka_unit_test(test_character_string_mod_buf),
         cmocka_unit_test(test_snprintf),
+        cmocka_unit_test(test_checked_snprintf),
         cmocka_unit_test(test_buffer_chomp),
+        cmocka_unit_test(test_buffer_null_terminate),
         cmocka_unit_test(test_buffer_parse)
     };
 

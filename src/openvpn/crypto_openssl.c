@@ -229,7 +229,7 @@ crypto_clear_error(void)
 void
 crypto_print_openssl_errors(const unsigned int flags)
 {
-    unsigned long err = 0;
+    openssl_err_t err = 0;
     int line, errflags;
     const char *file, *data, *func;
 
@@ -411,7 +411,7 @@ show_available_ciphers(void)
 
     printf("\nThe following ciphers have a block size of less than 128 bits, \n"
            "and are therefore deprecated.  Do not use unless you have to.\n\n");
-    for (int i = 0; i < cipher_list.num; i++)
+    for (size_t i = 0; i < cipher_list.num; i++)
     {
         if (cipher_kt_insecure(EVP_CIPHER_get0_name(cipher_list.list[i])))
         {
@@ -669,25 +669,27 @@ cipher_kt_name(const char *ciphername)
     return translate_cipher_name_to_openvpn(name);
 }
 
-int
+unsigned int
 cipher_kt_key_size(const char *ciphername)
 {
     evp_cipher_type *cipher = cipher_get(ciphername);
     int size = EVP_CIPHER_key_length(cipher);
+    ASSERT(size >= 0);
     EVP_CIPHER_free(cipher);
     return size;
 }
 
-int
+unsigned int
 cipher_kt_iv_size(const char *ciphername)
 {
     evp_cipher_type *cipher = cipher_get(ciphername);
     int ivsize = EVP_CIPHER_iv_length(cipher);
+    ASSERT(ivsize >= 0);
     EVP_CIPHER_free(cipher);
     return ivsize;
 }
 
-int
+unsigned int
 cipher_kt_block_size(const char *ciphername)
 {
     /*
@@ -733,10 +735,11 @@ cleanup:
     EVP_CIPHER_free(cbc_cipher);
     EVP_CIPHER_free(cipher);
     free(name);
+    ASSERT(block_size >= 0);
     return block_size;
 }
 
-int
+unsigned int
 cipher_kt_tag_size(const char *ciphername)
 {
     if (cipher_kt_mode_aead(ciphername))
@@ -872,7 +875,7 @@ cipher_ctx_init(EVP_CIPHER_CTX *ctx, const uint8_t *key, const char *ciphername,
     EVP_CIPHER_free(kt);
 }
 
-int
+unsigned int
 cipher_ctx_iv_length(const EVP_CIPHER_CTX *ctx)
 {
     return EVP_CIPHER_CTX_iv_length(ctx);
@@ -884,7 +887,7 @@ cipher_ctx_get_tag(EVP_CIPHER_CTX *ctx, uint8_t *tag_buf, int tag_size)
     return EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, tag_size, tag_buf);
 }
 
-int
+unsigned int
 cipher_ctx_block_size(const EVP_CIPHER_CTX *ctx)
 {
     return EVP_CIPHER_CTX_block_size(ctx);
@@ -1104,17 +1107,6 @@ md_kt_size(const char *mdname)
  *
  */
 
-int
-md_full(const char *mdname, const uint8_t *src, int src_len, uint8_t *dst)
-{
-    unsigned int in_md_len = 0;
-    evp_md_type *kt = md_get(mdname);
-
-    int ret = EVP_Digest(src, src_len, dst, &in_md_len, kt, NULL);
-    EVP_MD_free(kt);
-    return ret;
-}
-
 EVP_MD_CTX *
 md_ctx_new(void)
 {
@@ -1204,7 +1196,7 @@ hmac_ctx_init(HMAC_CTX *ctx, const uint8_t *key, const char *mdname)
     }
 
     /* make sure we used a big enough key */
-    ASSERT(HMAC_size(ctx) <= key_len);
+    ASSERT((ssize_t)HMAC_size(ctx) <= key_len);
 }
 
 void
@@ -1403,7 +1395,8 @@ bool
 ssl_tls1_PRF(const uint8_t *label, size_t label_len, const uint8_t *sec, size_t slen, uint8_t *out1,
              size_t olen)
 {
-    CRYPTO_tls1_prf(EVP_md5_sha1(), out1, olen, sec, slen, label, label_len, NULL, 0, NULL, 0);
+    return CRYPTO_tls1_prf(EVP_md5_sha1(), out1, olen, sec, slen,
+                           (const char *)label, label_len, NULL, 0, NULL, 0);
 }
 #elif !defined(LIBRESSL_VERSION_NUMBER) && !defined(ENABLE_CRYPTO_WOLFSSL)
 #if defined(__GNUC__) || defined(__clang__)

@@ -66,7 +66,8 @@ typedef union
 
 typedef struct
 {
-    int index;
+#define TUN_ADAPTER_INDEX_INVALID ((DWORD)-1)
+    DWORD index;
     char name[256];
 } interface_t;
 
@@ -102,14 +103,14 @@ typedef struct
     interface_t iface;
     char domains[512];
     short family;
-    int addr_len;
+    unsigned int addr_len;
     inet_address_t addr[4]; /* support up to 4 dns addresses */
 } dns_cfg_message_t;
 
 
 typedef enum
 {
-    nrpt_dnssec
+    nrpt_dnssec = 1 << 0,
 } nrpt_flags_t;
 
 #define NRPT_ADDR_NUM  8  /* Max. number of addresses */
@@ -129,7 +130,7 @@ typedef struct
 {
     message_header_t header;
     interface_t iface;
-    int addr_len;
+    unsigned int addr_len;
     inet_address_t addr[4]; /* support up to 4 dns addresses */
 } wins_cfg_message_t;
 

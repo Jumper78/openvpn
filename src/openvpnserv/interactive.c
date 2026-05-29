@@ -96,7 +96,7 @@ typedef list_item_t *undo_lists_t[_undo_type_max];
 typedef struct
 {
     HANDLE engine;
-    int index;
+    DWORD index;
     int metric_v4;
     int metric_v6;
 } wfp_block_data_t;
@@ -486,7 +486,7 @@ GetStartupData(HANDLE pipe, STARTUP_DATA *sud)
     sud->directory = data;
     len = wcslen(sud->directory) + 1;
     size -= len;
-    if (size <= 0)
+    if (size == 0)
     {
         MsgToEventLog(M_ERR, L"Startup data ends at working directory");
         ReturnError(pipe, ERROR_STARTUP_DATA, L"GetStartupData", 1, &exit_event);
@@ -496,7 +496,7 @@ GetStartupData(HANDLE pipe, STARTUP_DATA *sud)
     sud->options = sud->directory + len;
     len = wcslen(sud->options) + 1;
     size -= len;
-    if (size <= 0)
+    if (size == 0)
     {
         MsgToEventLog(M_ERR, L"Startup data ends at command line options");
         ReturnError(pipe, ERROR_STARTUP_DATA, L"GetStartupData", 1, &exit_event);
@@ -584,7 +584,7 @@ HandleAddressMessage(address_message_t *msg, undo_lists_t *lists)
     addr_row->Address = sockaddr_inet(msg->family, &msg->address);
     addr_row->OnLinkPrefixLength = (UINT8)msg->prefix_len;
 
-    if (msg->iface.index != -1)
+    if (msg->iface.index != TUN_ADAPTER_INDEX_INVALID)
     {
         addr_row->InterfaceIndex = msg->iface.index;
     }
@@ -667,7 +667,7 @@ HandleRouteMessage(route_message_t *msg, undo_lists_t *lists)
     fwd_row->DestinationPrefix.PrefixLength = (UINT8)msg->prefix_len;
     fwd_row->NextHop = sockaddr_inet(msg->family, &msg->gateway);
 
-    if (msg->iface.index != -1)
+    if (msg->iface.index != TUN_ADAPTER_INDEX_INVALID)
     {
         fwd_row->InterfaceIndex = msg->iface.index;
     }
@@ -1010,7 +1010,7 @@ HandleRegisterDNSMessage(void)
  * if action = "set" then "static" is added before $addr
  */
 static DWORD
-netsh_wins_cmd(const wchar_t *action, int if_index, const wchar_t *addr)
+netsh_wins_cmd(const wchar_t *action, DWORD if_index, const wchar_t *addr)
 {
     DWORD err = 0;
     int timeout = 30000; /* in msec */
@@ -1036,7 +1036,7 @@ netsh_wins_cmd(const wchar_t *action, int if_index, const wchar_t *addr)
     /* cmd template:
      * netsh interface ip $action wins $if_name $static $addr
      */
-    const wchar_t *fmt = L"netsh interface ip %ls wins %d %ls %ls";
+    const wchar_t *fmt = L"netsh interface ip %ls wins %lu %ls %ls";
 
     /* max cmdline length in wchars -- include room for worst case and some */
     size_t ncmdline = wcslen(fmt) + 11 /*if_index*/ + wcslen(action) + wcslen(addr)
@@ -1071,6 +1071,7 @@ ApplyGpolSettings32(void)
     publish_fn_t RtlPublishWnfStateData;
     const DWORD WNF_GPOL_SYSTEM_CHANGES_HI = 0x0D891E2A;
     const DWORD WNF_GPOL_SYSTEM_CHANGES_LO = 0xA3BC0875;
+    BOOL ret = FALSE;
 
     HMODULE ntdll = LoadLibraryA("ntdll.dll");
     if (ntdll == NULL)
@@ -1081,16 +1082,19 @@ ApplyGpolSettings32(void)
     RtlPublishWnfStateData = (publish_fn_t)GetProcAddress(ntdll, "RtlPublishWnfStateData");
     if (RtlPublishWnfStateData == NULL)
     {
-        return FALSE;
+        goto cleanup;
     }
 
     if (RtlPublishWnfStateData(WNF_GPOL_SYSTEM_CHANGES_LO, WNF_GPOL_SYSTEM_CHANGES_HI, 0, 0, 0, 0)
         != ERROR_SUCCESS)
     {
-        return FALSE;
+        goto cleanup;
     }
 
-    return TRUE;
+    ret = TRUE;
+cleanup:
+    FreeLibrary(ntdll);
+    return ret;
 }
 
 /**
@@ -1106,6 +1110,7 @@ ApplyGpolSettings64(void)
                                      unsigned int Length, INT64 ExplicitScope);
     publish_fn_t RtlPublishWnfStateData;
     const INT64 WNF_GPOL_SYSTEM_CHANGES = 0x0D891E2AA3BC0875;
+    BOOL ret = FALSE;
 
     HMODULE ntdll = LoadLibraryA("ntdll.dll");
     if (ntdll == NULL)
@@ -1116,15 +1121,18 @@ ApplyGpolSettings64(void)
     RtlPublishWnfStateData = (publish_fn_t)GetProcAddress(ntdll, "RtlPublishWnfStateData");
     if (RtlPublishWnfStateData == NULL)
     {
-        return FALSE;
+        goto cleanup;
     }
 
     if (RtlPublishWnfStateData(WNF_GPOL_SYSTEM_CHANGES, 0, 0, 0, 0) != ERROR_SUCCESS)
     {
-        return FALSE;
+        goto cleanup;
     }
 
-    return TRUE;
+    ret = TRUE;
+cleanup:
+    FreeLibrary(ntdll);
+    return ret;
 }
 
 /**
@@ -1269,7 +1277,7 @@ HasValidSearchList(HKEY key)
     if (!err || err == ERROR_MORE_DATA)
     {
         data[sizeof(data) - 1] = '\0';
-        for (int i = 0; i < strlen(data); ++i)
+        for (size_t i = 0; i < strlen(data); ++i)
         {
             if (isalnum(data[i]) || data[i] == '-' || data[i] == '.')
             {
@@ -1814,10 +1822,10 @@ HandleDNSConfigMessage(const dns_cfg_message_t *msg, undo_lists_t *lists)
 {
     DWORD err = 0;
     undo_type_t undo_type = (msg->family == AF_INET6) ? undo_dns6 : undo_dns4;
-    int addr_len = msg->addr_len;
+    unsigned int addr_len = msg->addr_len;
 
     /* sanity check */
-    const int max_addrs = _countof(msg->addr);
+    const unsigned int max_addrs = _countof(msg->addr);
     if (addr_len > max_addrs)
     {
         addr_len = max_addrs;
@@ -1868,14 +1876,14 @@ HandleDNSConfigMessage(const dns_cfg_message_t *msg, undo_lists_t *lists)
         return err; /* job done */
     }
 
-    if (msg->addr_len > 0)
+    if (addr_len > 0)
     {
         /* prepare the comma separated address list */
         /* cannot use max_addrs here as that is not considered compile
          * time constant by all compilers and constexpr is C23 */
         CHAR addrs[_countof(msg->addr) * 64]; /* 64 is enough for one IPv4/6 address */
         size_t offset = 0;
-        for (int i = 0; i < addr_len; ++i)
+        for (unsigned int i = 0; i < addr_len; ++i)
         {
             if (i != 0)
             {
@@ -1954,7 +1962,7 @@ static LSTATUS
 SetNameServerAddresses(PWSTR itf_id, const nrpt_address_t *addresses)
 {
     const short families[] = { AF_INET, AF_INET6 };
-    for (int i = 0; i < _countof(families); i++)
+    for (size_t i = 0; i < _countof(families); i++)
     {
         short family = families[i];
 
@@ -2436,7 +2444,7 @@ GetNrptExcludeData(PCWSTR search_domains, nrpt_exclude_data_t *data, size_t data
         if (v4_addrs_size || v6_addrs_size)
         {
             /* Replace delimiters with semicolons, as required by NRPT */
-            for (int j = 0; j < sizeof(data[0].addresses) && data[i].addresses[j]; j++)
+            for (size_t j = 0; j < sizeof(data[0].addresses) && data[i].addresses[j]; j++)
             {
                 if (data[i].addresses[j] == ',' || data[i].addresses[j] == ' ')
                 {
@@ -2567,7 +2575,7 @@ SetNrptExcludeRules(HKEY nrpt_key, DWORD ovpn_pid, PCWSTR search_domains)
     GetNrptExcludeData(search_domains, data, _countof(data));
 
     unsigned n = 0;
-    for (int i = 0; i < _countof(data); ++i)
+    for (size_t i = 0; i < _countof(data); ++i)
     {
         nrpt_exclude_data_t *d = &data[i];
         if (d->domains_size == 0)
@@ -2639,25 +2647,28 @@ SetNrptRules(HKEY nrpt_key, const nrpt_address_t *addresses, const char *domains
         free(wide_search_domains);
     }
 
-    /* Create address string list */
-    CHAR addr_list[NRPT_ADDR_NUM * NRPT_ADDR_SIZE];
-    PSTR pos = addr_list;
-    for (int i = 0; i < NRPT_ADDR_NUM && addresses[i][0]; ++i)
+    if (addresses[0][0])
     {
-        if (i != 0)
+        /* Create address string list */
+        CHAR addr_list[NRPT_ADDR_NUM * NRPT_ADDR_SIZE];
+        PSTR pos = addr_list;
+        for (int i = 0; i < NRPT_ADDR_NUM && addresses[i][0]; ++i)
         {
-            *pos++ = ';';
+            if (i != 0)
+            {
+                *pos++ = ';';
+            }
+            strcpy(pos, addresses[i]);
+            pos += strlen(pos);
         }
-        strcpy(pos, addresses[i]);
-        pos += strlen(pos);
-    }
 
-    WCHAR subkey[MAX_PATH];
-    swprintf(subkey, _countof(subkey), L"OpenVPNDNSRouting-%lu", ovpn_pid);
-    err = SetNrptRule(nrpt_key, subkey, addr_list, wide_domains, dom_size, dnssec);
-    if (err)
-    {
-        MsgToEventLog(M_ERR, L"%S: failed to set rule %s (%lu)", __func__, subkey, err);
+        WCHAR subkey[MAX_PATH];
+        swprintf(subkey, _countof(subkey), L"OpenVPNDNSRouting-%lu", ovpn_pid);
+        err = SetNrptRule(nrpt_key, subkey, addr_list, wide_domains, dom_size, dnssec);
+        if (err)
+        {
+            MsgToEventLog(M_ERR, L"%S: failed to set rule %s (%lu)", __func__, subkey, err);
+        }
     }
 
     if (domains[0])
@@ -2936,7 +2947,7 @@ HandleWINSConfigMessage(const wins_cfg_message_t *msg, undo_lists_t *lists)
 {
     DWORD err = NO_ERROR;
     wchar_t addr[16]; /* large enough to hold string representation of an ipv4 */
-    int addr_len = msg->addr_len;
+    unsigned int addr_len = msg->addr_len;
 
     /* sanity check */
     if (addr_len > _countof(msg->addr))
@@ -2967,7 +2978,7 @@ HandleWINSConfigMessage(const wins_cfg_message_t *msg, undo_lists_t *lists)
         goto out; /* job done */
     }
 
-    for (int i = 0; i < addr_len; ++i)
+    for (unsigned int i = 0; i < addr_len; ++i)
     {
         RtlIpv4AddressToStringW(&msg->addr[i].ipv4, addr);
         err = netsh_wins_cmd(i == 0 ? L"set" : L"add", msg->iface.index, addr);
@@ -2980,7 +2991,7 @@ HandleWINSConfigMessage(const wins_cfg_message_t *msg, undo_lists_t *lists)
          */
     }
 
-    int *if_index = malloc(sizeof(msg->iface.index));
+    PDWORD if_index = malloc(sizeof(msg->iface.index));
     if (if_index)
     {
         *if_index = msg->iface.index;
@@ -3013,7 +3024,7 @@ HandleEnableDHCPMessage(const enable_dhcp_message_t *dhcp)
     /* cmd template:
      * netsh interface ipv4 set address name=$if_index source=dhcp
      */
-    const wchar_t *fmt = L"netsh interface ipv4 set address name=\"%d\" source=dhcp";
+    const wchar_t *fmt = L"netsh interface ipv4 set address name=\"%lu\" source=dhcp";
 
     /* max cmdline length in wchars -- include room for if index:
      * 10 chars for 32 bit int in decimal and +1 for NUL
@@ -3246,7 +3257,7 @@ Undo(undo_lists_t *lists)
                     break;
 
                 case undo_wins:
-                    netsh_wins_cmd(L"delete", *(int *)item->data, NULL);
+                    netsh_wins_cmd(L"delete", *(PDWORD)item->data, NULL);
                     break;
 
                 case wfp_block:
@@ -3410,7 +3421,7 @@ RunOpenvpn(LPVOID p)
     ea[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
     ea[0].Trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
     ea[0].Trustee.ptstrName = (LPWSTR)svc_user->User.Sid;
-    ea[1].grfAccessPermissions = READ_CONTROL | SYNCHRONIZE | PROCESS_VM_READ | SYNCHRONIZE
+    ea[1].grfAccessPermissions = READ_CONTROL | PROCESS_VM_READ | SYNCHRONIZE
                                  | PROCESS_TERMINATE | PROCESS_QUERY_INFORMATION;
     ea[1].grfAccessMode = SET_ACCESS;
     ea[1].grfInheritance = NO_INHERITANCE;
@@ -3476,7 +3487,7 @@ RunOpenvpn(LPVOID p)
     swprintf(ovpn_pipe_name, _countof(ovpn_pipe_name),
              L"\\\\.\\pipe\\" _L(PACKAGE) L"%ls\\service_%lu_%ls", service_instance,
              GetCurrentThreadId(), pipe_uuid_str);
-    RpcStringFree(&pipe_uuid_str);
+    RpcStringFreeW(&pipe_uuid_str);
 
     /* make a security descriptor for the named pipe with access
      * restricted to the user and SYSTEM

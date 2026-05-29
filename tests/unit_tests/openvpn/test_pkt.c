@@ -236,7 +236,7 @@ test_tls_decrypt_lite_crypt(void **ut_state)
     free_tls_pre_decrypt_state(&state);
 
     /* flip a byte in various places */
-    for (int i = 0; i < sizeof(client_reset_v2_tls_crypt); i++)
+    for (size_t i = 0; i < sizeof(client_reset_v2_tls_crypt); i++)
     {
         buf_reset_len(&buf);
         buf_write(&buf, client_reset_v2_tls_crypt, sizeof(client_reset_v2_tls_crypt));
@@ -665,7 +665,7 @@ test_generate_reset_packet_plain(void **ut_state)
     struct buffer buf2 =
         tls_reset_standalone(&tas.tls_wrap, &tas, &client_id, &server_id, header, false);
     assert_int_equal(BLEN(&buf), BLEN(&buf2));
-    assert_memory_equal(BPTR(&buf), BPTR(&buf2), BLEN(&buf));
+    assert_memory_equal(BPTR(&buf), BPTR(&buf2), BLENZ(&buf));
 
     free_tls_pre_decrypt_state(&state);
     free_buf(&tas.workbuf);
@@ -702,7 +702,7 @@ test_generate_reset_packet_tls_auth(void **ut_state)
     struct buffer buf2 = tls_reset_standalone(&tas_client.tls_wrap, &tas_client, &client_id,
                                               &server_id, header, false);
     assert_int_equal(BLEN(&buf), BLEN(&buf2));
-    assert_memory_equal(BPTR(&buf), BPTR(&buf2), BLEN(&buf));
+    assert_memory_equal(BPTR(&buf), BPTR(&buf2), BLENZ(&buf));
 
     free_tls_pre_decrypt_state(&state);
 
@@ -765,15 +765,5 @@ main(void)
         cmocka_unit_test(test_extract_control_message)
     };
 
-#if defined(ENABLE_CRYPTO_OPENSSL)
-    OpenSSL_add_all_algorithms();
-#endif
-
-    int ret = cmocka_run_group_tests_name("pkt tests", tests, NULL, NULL);
-
-#if defined(ENABLE_CRYPTO_OPENSSL)
-    EVP_cleanup();
-#endif
-
-    return ret;
+    return cmocka_run_group_tests_name("pkt tests", tests, NULL, NULL);
 }

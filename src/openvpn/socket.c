@@ -44,9 +44,7 @@
 bool
 sockets_read_residual(const struct context *c)
 {
-    int i;
-
-    for (i = 0; i < c->c1.link_sockets_num; i++)
+    for (int i = 0; i < c->c1.link_sockets_num; i++)
     {
         if (c->c2.link_sockets[i]->stream_buf.residual_fully_formed)
         {
@@ -1359,6 +1357,13 @@ link_socket_init_phase1(struct context *c, int sock_index, int mode)
         proto = o->ce.proto;
     }
 
+    /* If --lport is specified in a client connection block,
+     * it takes precedence over the global setting. */
+    if (o->mode == MODE_POINT_TO_POINT && o->ce.local_port_defined)
+    {
+        port = o->ce.local_port;
+    }
+
     if (c->mode == CM_CHILD_TCP || c->mode == CM_CHILD_UDP)
     {
         struct link_socket *tmp_sock = NULL;
@@ -2053,13 +2058,19 @@ socket_stat(const struct link_socket *s, unsigned int rwflags, struct gc_arena *
  * stream connection.
  */
 
+/**
+ * resets the stream buffer to be set up for the next round of
+ * reassembling a packet
+ *
+ * But still leaves the current packet in \c sb->buf to be potentially
+ * read.
+ */
 static inline void
 stream_buf_reset(struct stream_buf *sb)
 {
     dmsg(D_STREAM_DEBUG, "STREAM: RESET");
     sb->residual_fully_formed = false;
     sb->buf = sb->buf_init;
-    buf_reset(&sb->next);
     sb->len = -1;
 }
 
@@ -2081,19 +2092,35 @@ stream_buf_init(struct stream_buf *sb, struct buffer *buf, const unsigned int so
     dmsg(D_STREAM_DEBUG, "STREAM: INIT maxlen=%d", sb->maxlen);
 }
 
-static inline void
-stream_buf_set_next(struct stream_buf *sb)
+/**
+ * Return a buffer that is backed by the same backend as sb->buf that
+ * determines where the next read should be done by also having the
+ * right offset into \c sb->buf.
+ * @param sb the stream buffer from which to construct the next buffer
+ */
+static inline struct buffer
+stream_buf_get_next(struct stream_buf *sb)
 {
     /* set up 'next' for next i/o read */
-    sb->next = sb->buf;
-    sb->next.offset = sb->buf.offset + sb->buf.len;
-    sb->next.len = (sb->len >= 0 ? sb->len : sb->maxlen) - sb->buf.len;
-    dmsg(D_STREAM_DEBUG, "STREAM: SET NEXT, buf=[%d,%d] next=[%d,%d] len=%d maxlen=%d",
-         sb->buf.offset, sb->buf.len, sb->next.offset, sb->next.len, sb->len, sb->maxlen);
-    ASSERT(sb->next.len > 0);
-    ASSERT(buf_safe(&sb->buf, sb->next.len));
+    struct buffer next;
+    next = sb->buf;
+    next.offset = sb->buf.offset + sb->buf.len;
+    next.len = (sb->len >= 0 ? sb->len : sb->maxlen) - sb->buf.len;
+    dmsg(D_STREAM_DEBUG, "STREAM: GET NEXT, buf=[%d,%d] next=[%d,%d] len=%d maxlen=%d",
+         sb->buf.offset, sb->buf.len, next.offset, next.len, sb->len, sb->maxlen);
+    ASSERT(next.len > 0);
+    ASSERT(buf_safe(&sb->buf, next.len));
+    return next;
 }
 
+/**
+ * Sets the parameter buf to the current buffer of \c sb->buf.
+ * This function assumes that caller already checked if the packet in \c sb->buf
+ * is fully assembled.
+ *
+ * @param sb    stream buffer to operate on
+ * @param buf   buffer to point to the contents of buf
+ */
 static inline void
 stream_buf_get_final(struct stream_buf *sb, struct buffer *buf)
 {
@@ -2102,33 +2129,42 @@ stream_buf_get_final(struct stream_buf *sb, struct buffer *buf)
     *buf = sb->buf;
 }
 
-static inline void
-stream_buf_get_next(struct stream_buf *sb, struct buffer *buf)
-{
-    dmsg(D_STREAM_DEBUG, "STREAM: GET NEXT len=%d", buf_defined(&sb->next) ? sb->next.len : -1);
-    ASSERT(buf_defined(&sb->next));
-    *buf = sb->next;
-}
-
 bool
-stream_buf_read_setup_dowork(struct link_socket *sock)
+stream_buf_read_setup_dowork(struct stream_buf *sb)
 {
-    if (sock->stream_buf.residual.len && !sock->stream_buf.residual_fully_formed)
+    if (sb->residual.len && !sb->residual_fully_formed)
     {
-        ASSERT(buf_copy(&sock->stream_buf.buf, &sock->stream_buf.residual));
-        ASSERT(buf_init(&sock->stream_buf.residual, 0));
-        sock->stream_buf.residual_fully_formed = stream_buf_added(&sock->stream_buf, 0);
+        ASSERT(buf_copy(&sb->buf, &sb->residual));
+        ASSERT(buf_init(&sb->residual, 0));
+        sb->residual_fully_formed = stream_buf_added(sb, 0);
         dmsg(D_STREAM_DEBUG, "STREAM: RESIDUAL FULLY FORMED [%s], len=%d",
-             sock->stream_buf.residual_fully_formed ? "YES" : "NO", sock->stream_buf.residual.len);
+             sb->residual_fully_formed ? "YES" : "NO", sb->residual.len);
     }
 
-    if (!sock->stream_buf.residual_fully_formed)
-    {
-        stream_buf_set_next(&sock->stream_buf);
-    }
-    return !sock->stream_buf.residual_fully_formed;
+    return !sb->residual_fully_formed;
 }
 
+/**
+ * This will determine if \c sb->buf contains a full packet. It will also
+ * move anything in \c sb->buf beyond a full packet to \c sb->residual.
+ *
+ * The first time the function is called with a valid buffer and port sharing
+ * is enabled, the function will also determine if the buffer contains
+ * OpenVPN protocol data and store the result in \c sb->port_share_state.
+ *
+ * If a packet outside the allowed range is detected, the error state
+ * on \c sb is set.
+ *
+ * Since the buffer in \c sb->buf is modified from the outside (via
+ * \c stream_buf_get_next) the parameter \p length_added needs to be set
+ * to the amount of bytes that have been written to this buffer. If the
+ * buffer was not modified but should still be analysed and potentially
+ * split to \c sb->residual, the parameter \p length_added should be 0.
+ *
+ * @param sb the stream buffer
+ * @param length_added The length that has been added to \c sb->buf
+ * @return true if \c sb->buf contains fully reassembled packet
+ */
 static bool
 stream_buf_added(struct stream_buf *sb, int length_added)
 {
@@ -2149,7 +2185,7 @@ stream_buf_added(struct stream_buf *sb, int length_added)
         {
             if (!is_openvpn_protocol(&sb->buf))
             {
-                msg(D_STREAM_ERRORS, "Non-OpenVPN client protocol detected");
+                msg(D_PS_PROXY, "Non-OpenVPN client protocol detected");
                 sb->port_share_state = PS_FOREIGN;
                 sb->error = true;
                 return false;
@@ -2191,7 +2227,6 @@ stream_buf_added(struct stream_buf *sb, int length_added)
     else
     {
         dmsg(D_STREAM_DEBUG, "STREAM: ADD returned FALSE (have=%d need=%d)", sb->buf.len, sb->len);
-        stream_buf_set_next(sb);
         return false;
     }
 }
@@ -2261,9 +2296,8 @@ link_socket_read_tcp(struct link_socket *sock, struct buffer *buf)
         sockethandle_t sh = { .s = sock->sd };
         len = sockethandle_finalize(sh, &sock->reads, buf, NULL);
 #else
-        struct buffer frag;
-        stream_buf_get_next(&sock->stream_buf, &frag);
-        len = recv(sock->sd, BPTR(&frag), BLEN(&frag), MSG_NOSIGNAL);
+        struct buffer frag = stream_buf_get_next(&sock->stream_buf);
+        len = recv(sock->sd, BPTR(&frag), BLENZ(&frag), MSG_NOSIGNAL);
 #endif
 
         if (!len)
@@ -2411,8 +2445,8 @@ link_socket_read_udp_posix(struct link_socket *sock, struct buffer *buf,
 ssize_t
 link_socket_write_tcp(struct link_socket *sock, struct buffer *buf, struct link_socket_actual *to)
 {
-    packet_size_type len = BLEN(buf);
-    dmsg(D_STREAM_DEBUG, "STREAM: WRITE %d offset=%d", (int)len, buf->offset);
+    packet_size_type len = (packet_size_type)BLENZ(buf);
+    dmsg(D_STREAM_DEBUG, "STREAM: WRITE %u offset=%d", len, buf->offset);
     ASSERT(len <= sock->stream_buf.maxlen);
     len = htonps(len);
     ASSERT(buf_write_prepend(buf, &len, sizeof(len)));
@@ -2439,7 +2473,7 @@ link_socket_write_udp_posix_sendmsg(struct link_socket *sock, struct buffer *buf
     uint8_t pktinfo_buf[PKTINFO_BUF_SIZE];
 
     iov.iov_base = BPTR(buf);
-    iov.iov_len = BLEN(buf);
+    iov.iov_len = BLENZ(buf);
     mesg.msg_iov = &iov;
     mesg.msg_iovlen = 1;
     switch (to->dest.addr.sa.sa_family)
@@ -2538,7 +2572,7 @@ socket_recv_queue(struct link_socket *sock, int maxsize)
         }
         else if (proto_is_tcp(sock->info.proto))
         {
-            stream_buf_get_next(&sock->stream_buf, &sock->reads.buf);
+            sock->reads.buf = stream_buf_get_next(&sock->stream_buf);
         }
         else
         {
@@ -2547,10 +2581,9 @@ socket_recv_queue(struct link_socket *sock, int maxsize)
 
         /* Win32 docs say it's okay to allocate the wsabuf on the stack */
         wsabuf[0].buf = BSTR(&sock->reads.buf);
+        /* make sure maxsize is sane */
+        ASSERT(maxsize <= BLEN(&sock->reads.buf));
         wsabuf[0].len = maxsize ? maxsize : BLEN(&sock->reads.buf);
-
-        /* check for buffer overflow */
-        ASSERT(wsabuf[0].len <= BLEN(&sock->reads.buf));
 
         /* the overlapped read will signal this event on I/O completion */
         ASSERT(ResetEvent(sock->reads.overlapped.hEvent));

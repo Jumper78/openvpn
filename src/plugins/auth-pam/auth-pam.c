@@ -187,7 +187,7 @@ recv_string(int fd, char *buffer, size_t len)
 static ssize_t
 send_string(int fd, const char *string)
 {
-    const size_t len = strlen(string) + 1;
+    const ssize_t len = strlen(string) + 1;
     const ssize_t size = write(fd, string, len);
     if (size == len)
     {

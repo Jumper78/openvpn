@@ -326,6 +326,11 @@ management_callback_remote_entry_count(void *arg)
     return l->len;
 }
 
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-compare"
+#endif
+
 static bool
 management_callback_remote_entry_get(void *arg, unsigned int index, char **remote)
 {
@@ -359,6 +364,10 @@ management_callback_remote_entry_get(void *arg, unsigned int index, char **remot
 
     return ret;
 }
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 static bool
 management_callback_remote_cmd(void *arg, const char **p)
@@ -458,6 +467,7 @@ ce_management_query_remote(struct context *c)
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wsign-compare"
 #endif
 
 /*
@@ -656,10 +666,10 @@ init_query_passwords(const struct context *c)
         enable_auth_user_pass();
 #ifdef ENABLE_MANAGEMENT
         auth_user_pass_setup(c->options.auth_user_pass_file, c->options.auth_user_pass_file_inline,
-                             &c->options.sc_info);
+                             c->options.auth_user_pass_username_only, &c->options.sc_info);
 #else
         auth_user_pass_setup(c->options.auth_user_pass_file, c->options.auth_user_pass_file_inline,
-                             NULL);
+                             c->options.auth_user_pass_username_only, NULL);
 #endif
     }
 }
@@ -2330,7 +2340,7 @@ do_deferred_options_part2(struct context *c)
 }
 
 bool
-do_up(struct context *c, bool pulled_options, unsigned int option_types_found)
+do_up(struct context *c, bool pulled_options, uint64_t option_types_found)
 {
     int error_flags = 0;
     if (!c->c2.do_up_ran)
@@ -2465,7 +2475,7 @@ do_up(struct context *c, bool pulled_options, unsigned int option_types_found)
 }
 
 bool
-do_update(struct context *c, unsigned int option_types_found)
+do_update(struct context *c, uint64_t option_types_found)
 {
     /* Not necessary since to receive the update the openvpn
      * instance must be up and running but just in case
@@ -2579,7 +2589,7 @@ do_deferred_p2p_ncp(struct context *c)
 }
 
 bool
-do_deferred_options(struct context *c, const unsigned int found, const bool is_update)
+do_deferred_options(struct context *c, const uint64_t found, const bool is_update)
 {
     if (found & OPT_P_MESSAGES)
     {
@@ -2990,13 +3000,6 @@ init_crypto_pre(struct context *c, const unsigned int flags)
             packet_id_persist_load(&c->c1.pid_persist, c->options.packet_id_file);
         }
     }
-
-#ifdef ENABLE_PREDICTION_RESISTANCE
-    if (c->options.use_prediction_resistance)
-    {
-        rand_ctx_enable_prediction_resistance();
-    }
-#endif
 }
 
 
@@ -3384,6 +3387,7 @@ do_init_crypto_tls(struct context *c, const unsigned int flags)
     }
     to.auth_user_pass_file = options->auth_user_pass_file;
     to.auth_user_pass_file_inline = options->auth_user_pass_file_inline;
+    to.auth_user_pass_username_only = options->auth_user_pass_username_only;
     to.auth_token_generate = options->auth_token_generate;
     to.auth_token_lifetime = options->auth_token_lifetime;
     to.auth_token_renewal = options->auth_token_renewal;
@@ -4240,7 +4244,7 @@ open_plugins(struct context *c, const bool import_options, int init_point)
                 int i;
                 for (i = 0; i < config.n; ++i)
                 {
-                    unsigned int option_types_found = 0;
+                    uint64_t option_types_found = 0;
                     if (config.list[i] && config.list[i]->value)
                     {
                         options_string_import(

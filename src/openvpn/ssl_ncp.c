@@ -163,7 +163,7 @@ mutate_ncp_cipher_list(const char *list, struct gc_arena *gc)
             }
 
             /* Ensure buffer has capacity for cipher name + : + \0 */
-            if (!(buf_forward_capacity(&new_list) > strlen(ovpn_cipher_name) + 2))
+            if (buf_forward_capacity(&new_list) < (int)strlen(ovpn_cipher_name) + 2)
             {
                 msg(M_WARN, "Length of --data-ciphers is over the "
                             "limit of 127 chars");
@@ -198,7 +198,7 @@ append_cipher_to_ncp_list(struct options *o, const char *ciphername)
     size_t newlen = strlen(o->ncp_ciphers) + 1 + strlen(ciphername) + 1;
     char *ncp_ciphers = gc_malloc(newlen, false, &o->gc);
 
-    ASSERT(snprintf(ncp_ciphers, newlen, "%s:%s", o->ncp_ciphers, ciphername) < newlen);
+    ASSERT(checked_snprintf(ncp_ciphers, newlen, "%s:%s", o->ncp_ciphers, ciphername));
     o->ncp_ciphers = ncp_ciphers;
 }
 
@@ -307,7 +307,7 @@ tls_poor_mans_ncp(struct options *o, const char *remote_ciphername)
 }
 
 bool
-check_pull_client_ncp(struct context *c, const unsigned int found)
+check_pull_client_ncp(struct context *c, const uint64_t found)
 {
     if (found & OPT_P_NCP)
     {

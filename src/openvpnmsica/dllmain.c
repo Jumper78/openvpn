@@ -98,7 +98,6 @@ dont_mute(unsigned int flags)
     return true;
 }
 
-
 void
 x_msg_va(const unsigned int flags, const char *format, va_list arglist)
 {
@@ -120,7 +119,7 @@ x_msg_va(const unsigned int flags, const char *format, va_list arglist)
         /* Field 2: The message string. */
         char szBufStack[128];
         int iResultLen = vsnprintf(szBufStack, _countof(szBufStack), format, arglist);
-        if (iResultLen < _countof(szBufStack))
+        if (iResultLen > 0 && (unsigned int)iResultLen < _countof(szBufStack))
         {
             /* Use from stack. */
             MsiRecordSetStringA(hRecordProg, 2, szBufStack);

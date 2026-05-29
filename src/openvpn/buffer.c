@@ -53,7 +53,7 @@ array_mult_safe(const size_t m1, const size_t m2, const size_t extra)
 void
 buf_size_error(const size_t size)
 {
-    msg(M_FATAL, "fatal buffer size error, size=%lu", (unsigned long)size);
+    msg(M_FATAL, "fatal buffer size error, size=%zu", size);
 }
 
 struct buffer
@@ -64,14 +64,13 @@ alloc_buf(size_t size)
 #endif
 {
     struct buffer buf;
+    CLEAR(buf);
 
     if (!buf_size_valid(size))
     {
         buf_size_error(size);
     }
     buf.capacity = (int)size;
-    buf.offset = 0;
-    buf.len = 0;
 #ifdef DMALLOC
     buf.data = openvpn_dmalloc(file, line, size);
 #else
@@ -90,13 +89,13 @@ alloc_buf_gc(size_t size, struct gc_arena *gc)
 #endif
 {
     struct buffer buf;
+    CLEAR(buf);
+
     if (!buf_size_valid(size))
     {
         buf_size_error(size);
     }
     buf.capacity = (int)size;
-    buf.offset = 0;
-    buf.len = 0;
 #ifdef DMALLOC
     buf.data = (uint8_t *)gc_malloc_debug(size, false, gc, file, line);
 #else
@@ -120,13 +119,17 @@ clone_buf(const struct buffer *buf)
     ret.capacity = buf->capacity;
     ret.offset = buf->offset;
     ret.len = buf->len;
+#ifdef BUF_INIT_TRACKING
+    ret.debug_file = buf->debug_file;
+    ret.debug_line = buf->debug_line;
+#endif
 #ifdef DMALLOC
     ret.data = (uint8_t *)openvpn_dmalloc(file, line, buf->capacity);
 #else
     ret.data = (uint8_t *)malloc(buf->capacity);
 #endif
     check_malloc_return(ret.data);
-    memcpy(BPTR(&ret), BPTR(buf), BLEN(buf));
+    memcpy(BPTR(&ret), BPTR(buf), BLENZ(buf));
     return ret;
 }
 
@@ -140,6 +143,7 @@ buf_init_debug(struct buffer *buf, int offset, const char *file, int line)
     return buf_init_dowork(buf, offset);
 }
 
+#ifdef VERIFY_ALIGNMENT
 static inline int
 buf_debug_line(const struct buffer *buf)
 {
@@ -151,6 +155,7 @@ buf_debug_file(const struct buffer *buf)
 {
     return buf->debug_file;
 }
+#endif
 
 #else /* ifdef BUF_INIT_TRACKING */
 
@@ -177,7 +182,7 @@ buf_assign(struct buffer *dest, const struct buffer *src)
     {
         return false;
     }
-    return buf_write(dest, BPTR(src), BLEN(src));
+    return buf_write(dest, BPTR(src), BLENZ(src));
 }
 
 void
@@ -290,7 +295,7 @@ buf_catrunc(struct buffer *buf, const char *str)
     if (buf_forward_capacity(buf) <= 1)
     {
         size_t len = strlen(str) + 1;
-        if (len < buf_forward_capacity_total(buf))
+        if (buf_size_valid(len) && (int)len < buf_forward_capacity_total(buf))
         {
             memcpy(buf->data + buf->capacity - len, str, len);
         }
@@ -308,7 +313,7 @@ buffer_write_file(const char *filename, const struct buffer *buf)
         return false;
     }
 
-    const ssize_t size = write(fd, BPTR(buf), BLEN(buf));
+    const ssize_t size = write(fd, BPTR(buf), (unsigned int)BLEN(buf));
     if (size != BLEN(buf))
     {
         msg(M_ERRNO, "Write error on file '%s'", filename);
@@ -559,7 +564,7 @@ buf_chomp(struct buffer *buf)
         {
             break;
         }
-        if (char_class(*last, CC_CRLF | CC_NULL))
+        if (char_class((unsigned char)*last, CC_CRLF | CC_NULL))
         {
             if (!buf_inc_len(buf, -1))
             {
@@ -777,7 +782,7 @@ bool
 buf_string_match_head_str(const struct buffer *src, const char *match)
 {
     const size_t size = strlen(match);
-    if (size > src->len)
+    if (!buf_size_valid(size) || (int)size > src->len)
     {
         return false;
     }
@@ -876,6 +881,14 @@ np(const char *str)
  * Classify and mutate strings based on character types.
  */
 
+/* Note 1: This functions depends on getting an unsigned
+   char. Both the is*() functions and our own checks expect it
+   this way.
+   Note 2: For CC_PRINT we just accept everything >= 32, so
+   if we ingest non-ASCII UTF-8 we will classify it as
+   printable since it will be >= 128. Other encodings are
+   not officially supported.
+*/
 bool
 char_class(const unsigned char c, const unsigned int flags)
 {
@@ -1019,7 +1032,8 @@ char_class(const unsigned char c, const unsigned int flags)
 static inline bool
 char_inc_exc(const char c, const unsigned int inclusive, const unsigned int exclusive)
 {
-    return char_class(c, inclusive) && !char_class(c, exclusive);
+    return char_class((unsigned char)c, inclusive)
+           && !char_class((unsigned char)c, exclusive);
 }
 
 bool
@@ -1125,6 +1139,17 @@ string_replace_leading(char *str, const char match, const char replace)
     }
 }
 
+bool
+checked_snprintf(char *str, size_t size, const char *format, ...)
+{
+    va_list arglist;
+    va_start(arglist, format);
+    ASSERT(size < INT_MAX);
+    int len = vsnprintf(str, size, format, arglist);
+    va_end(arglist);
+    return (len >= 0 && len < (ssize_t)size);
+}
+
 #ifdef VERIFY_ALIGNMENT
 void
 valign4(const struct buffer *buf, const char *file, const int line)
@@ -1132,7 +1157,7 @@ valign4(const struct buffer *buf, const char *file, const int line)
     if (buf && buf->len)
     {
         msglvl_t msglevel = D_ALIGN_DEBUG;
-        const unsigned int u = (unsigned int)BPTR(buf);
+        const uintptr_t u = (uintptr_t)BPTR(buf);
 
         if (u & (PAYLOAD_ALIGN - 1))
         {
@@ -1171,7 +1196,7 @@ buffer_list_free(struct buffer_list *ol)
 bool
 buffer_list_defined(const struct buffer_list *ol)
 {
-    return ol && ol->head != NULL;
+    return ol && ol->head != NULL && ol->size > 0;
 }
 
 void
@@ -1198,7 +1223,7 @@ buffer_list_push(struct buffer_list *ol, const char *str)
         struct buffer_entry *e = buffer_list_push_data(ol, str, len + 1);
         if (e)
         {
-            e->buf.len = (int)len; /* Don't count trailing '\0' as part of length */
+            e->buf.len--; /* Don't count trailing '\0' as part of length */
         }
     }
 }
@@ -1224,6 +1249,7 @@ buffer_list_push_data(struct buffer_list *ol, const void *data, size_t size)
         }
         e->buf = alloc_buf(size);
         memcpy(e->buf.data, data, size);
+        /* Note: size implicitly checked by alloc_buf */
         e->buf.len = (int)size;
         ol->tail = e;
     }
@@ -1249,10 +1275,10 @@ buffer_list_aggregate_separator(struct buffer_list *bl, const size_t max_len, co
     const size_t sep_len = strlen(sep);
     struct buffer_entry *more = bl->head;
     size_t size = 0;
-    int count = 0;
-    for (count = 0; more; ++count)
+    size_t count = 0;
+    for (; more; ++count)
     {
-        size_t extra_len = BLEN(&more->buf) + sep_len;
+        size_t extra_len = BLENZ(&more->buf) + sep_len;
         if (size + extra_len > max_len)
         {
             break;
@@ -1297,7 +1323,7 @@ buffer_list_aggregate(struct buffer_list *bl, const size_t max)
 void
 buffer_list_pop(struct buffer_list *ol)
 {
-    if (ol && ol->head)
+    if (buffer_list_defined(ol))
     {
         struct buffer_entry *e = ol->head->next;
         free_buf(&ol->head->buf);

@@ -171,8 +171,13 @@ auth_token_test_timeout(void **state)
 {
     struct test_context *ctx = (struct test_context *)*state;
 
-    now = 100000;
+    const time_t initial_time = 100000;
+    now = initial_time;
     generate_auth_token(&ctx->up, &ctx->multi);
+
+    const time_t token_renew_window =
+        initial_time + 2 * ctx->session->opt->auth_token_renewal;
+    const time_t token_eol = initial_time + ctx->session->opt->auth_token_lifetime + 1;
 
     strcpy(ctx->up.password, ctx->multi.auth_token);
     free(ctx->multi.auth_token_initial);
@@ -182,26 +187,21 @@ auth_token_test_timeout(void **state)
     assert_int_equal(verify_auth_token(&ctx->up, &ctx->multi, ctx->session), AUTH_TOKEN_HMAC_OK);
 
     /* Token before validity, should be rejected */
-    now = 100000 - 100;
+    now = initial_time - 100;
     assert_int_equal(verify_auth_token(&ctx->up, &ctx->multi, ctx->session),
                      AUTH_TOKEN_HMAC_OK | AUTH_TOKEN_EXPIRED);
 
-    /* Token no valid for renegotiate_seconds but still for renewal_time */
-    now = 100000 + 2 * ctx->session->opt->renegotiate_seconds - 20;
-    assert_int_equal(verify_auth_token(&ctx->up, &ctx->multi, ctx->session),
-                     AUTH_TOKEN_HMAC_OK | AUTH_TOKEN_EXPIRED);
-
-
-    now = 100000 + 2 * ctx->session->opt->auth_token_renewal - 20;
+    /* Token still valid for renewal_time */
+    now = token_renew_window - 20;
     assert_int_equal(verify_auth_token(&ctx->up, &ctx->multi, ctx->session), AUTH_TOKEN_HMAC_OK);
 
     /* Token past validity, should be rejected */
-    now = 100000 + 2 * ctx->session->opt->renegotiate_seconds + 20;
+    now = token_renew_window + 20;
     assert_int_equal(verify_auth_token(&ctx->up, &ctx->multi, ctx->session),
                      AUTH_TOKEN_HMAC_OK | AUTH_TOKEN_EXPIRED);
 
-    /* But not when we reached our timeout */
-    now = 100000 + ctx->session->opt->auth_token_lifetime + 1;
+    /* Token past lifetime, should be rejected */
+    now = token_eol;
     assert_int_equal(verify_auth_token(&ctx->up, &ctx->multi, ctx->session),
                      AUTH_TOKEN_HMAC_OK | AUTH_TOKEN_EXPIRED);
 
@@ -209,8 +209,8 @@ auth_token_test_timeout(void **state)
     ctx->multi.auth_token_initial = NULL;
 
     /* regenerate the token util it hits the expiry */
-    now = 100000;
-    while (now < 100000 + ctx->session->opt->auth_token_lifetime + 1)
+    now = initial_time;
+    while (now < token_eol)
     {
         assert_int_equal(verify_auth_token(&ctx->up, &ctx->multi, ctx->session),
                          AUTH_TOKEN_HMAC_OK);
@@ -418,11 +418,5 @@ main(void)
         cmocka_unit_test_setup_teardown(auth_token_test_session_mismatch, setup, teardown)
     };
 
-#if defined(ENABLE_CRYPTO_OPENSSL)
-    OpenSSL_add_all_algorithms();
-#endif
-
-    int ret = cmocka_run_group_tests_name("auth-token tests", tests, NULL, NULL);
-
-    return ret;
+    return cmocka_run_group_tests_name("auth-token tests", tests, NULL, NULL);
 }

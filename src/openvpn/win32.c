@@ -881,9 +881,8 @@ env_block(const struct env_set *es)
     char force_path[256];
     char *sysroot = get_win_sys_path();
 
-    if (snprintf(force_path, sizeof(force_path), "PATH=%s\\System32;%s;%s\\System32\\Wbem",
-                 sysroot, sysroot, sysroot)
-        >= sizeof(force_path))
+    if (!checked_snprintf(force_path, sizeof(force_path), "PATH=%s\\System32;%s;%s\\System32\\Wbem",
+                          sysroot, sysroot, sysroot))
     {
         msg(M_WARN, "env_block: default path truncated to %s", force_path);
     }
@@ -1186,7 +1185,7 @@ win_wfp_block_service(bool add, bool dns_only, int index, const HANDLE pipe)
     if (ack.error_number != NO_ERROR)
     {
         msg(M_WARN,
-            "WFP block: %s block filters using service failed: %s [status=0x%x if_index=%d]",
+            "WFP block: %s block filters using service failed: %s [status=0x%x if_index=%lu]",
             (add ? "adding" : "deleting"), strerror_win32(ack.error_number, &gc), ack.error_number,
             data.iface.index);
         goto out;

@@ -177,7 +177,7 @@ dco_new_peer(dco_context_t *dco, unsigned int peerid, int sd, struct sockaddr *l
     ret = ioctl(dco->fd, SIOCSDRVSPEC, &drv);
     if (ret)
     {
-        msg(M_ERR | M_ERRNO, "Failed to create new peer");
+        msg(M_ERR, "Failed to create new peer");
     }
 
     free(drv.ifd_data);
@@ -205,7 +205,7 @@ open_fd(dco_context_t *dco)
         return -1;
     }
 
-    dco->fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    dco->fd = socket(AF_LOCAL, SOCK_DGRAM | SOCK_CLOEXEC, 0);
     if (dco->fd != -1)
     {
         dco->open = true;
@@ -317,7 +317,7 @@ remove_interface(struct tuntap *tt)
     ret = ioctl(tt->dco.fd, SIOCIFDESTROY, &ifr);
     if (ret)
     {
-        msg(M_ERR | M_ERRNO, "Failed to remove interface %s", ifr.ifr_name);
+        msg(M_ERR, "Failed to remove interface %s", ifr.ifr_name);
     }
 
     tt->dco.ifname[0] = 0;
@@ -473,7 +473,7 @@ start_tun(dco_context_t *dco)
     ret = ioctl(dco->fd, SIOCSDRVSPEC, &drv);
     if (ret)
     {
-        msg(M_ERR | M_ERRNO, "Failed to start vpn");
+        msg(M_ERR, "Failed to start vpn");
     }
 
     return ret;
@@ -511,7 +511,7 @@ dco_new_key(dco_context_t *dco, unsigned int peerid, int keyid, dco_key_slot_t s
     ret = ioctl(dco->fd, SIOCSDRVSPEC, &drv);
     if (ret)
     {
-        msg(M_ERR | M_ERRNO, "Failed to set key");
+        msg(M_ERR, "Failed to set key");
     }
     else
     {
@@ -715,9 +715,10 @@ dco_available(msglvl_t msglevel)
      * loaded, or built into the kernel. */
     (void)kldload("if_ovpn");
 
-    fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    fd = socket(AF_LOCAL, SOCK_DGRAM | SOCK_CLOEXEC, 0);
     if (fd < 0)
     {
+        msg(M_WARN | M_ERRNO, "%s: socket() failed, disabling data channel offload", __func__);
         return false;
     }
 
@@ -841,6 +842,7 @@ dco_get_peer_stats_multi(dco_context_t *dco, const bool raise_sigusr1_on_err)
 
 retry:
     buf = realloc(buf, buf_size);
+    check_malloc_return(buf);
     drv.ifd_len = buf_size;
     drv.ifd_data = buf;
 

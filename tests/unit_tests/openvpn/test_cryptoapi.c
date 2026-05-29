@@ -115,10 +115,10 @@ void
 init_cert_data(void)
 {
     struct test_cert certs_local[] = {
-        { cert1, key1, cname1, "OVPN TEST CA1", "OVPN Test Cert 1", hash1, 1 },
-        { cert2, key2, cname2, "OVPN TEST CA2", "OVPN Test Cert 2", hash2, 1 },
-        { cert3, key3, cname3, "OVPN TEST CA1", "OVPN Test Cert 3", hash3, 1 },
-        { cert4, key4, cname4, "OVPN TEST CA2", "OVPN Test Cert 4", hash4, 0 },
+        { cert1, privkey1, cname1, "OVPN TEST CA1", "OVPN Test Cert 1", hash1, 1 },
+        { cert2, privkey2, cname2, "OVPN TEST CA2", "OVPN Test Cert 2", hash2, 1 },
+        { cert3, privkey3, cname3, "OVPN TEST CA1", "OVPN Test Cert 3", hash3, 1 },
+        { cert4, privkey4, cname4, "OVPN TEST CA2", "OVPN Test Cert 4", hash4, 0 },
         { 0 }
     };
     assert_int_equal(sizeof(certs_local), sizeof(certs));
@@ -467,17 +467,17 @@ test_parse_hexstring(void **state)
     unsigned char hash[255];
     (void)state;
 
-    for (int i = 0; i < _countof(valid_str); i++)
+    for (size_t i = 0; i < _countof(valid_str); i++)
     {
-        int len = parse_hexstring(valid_str[i], hash, _countof(hash));
+        DWORD len = parse_hexstring(valid_str[i], hash, _countof(hash));
         assert_int_equal(len, sizeof(test_hash));
         assert_memory_equal(hash, test_hash, sizeof(test_hash));
         memset(hash, 0, _countof(hash));
     }
 
-    for (int i = 0; i < _countof(invalid_str); i++)
+    for (size_t i = 0; i < _countof(invalid_str); i++)
     {
-        int len = parse_hexstring(invalid_str[i], hash, _countof(hash));
+        DWORD len = parse_hexstring(invalid_str[i], hash, _countof(hash));
         assert_int_equal(len, 0);
     }
 }
